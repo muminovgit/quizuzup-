@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     is_premium INTEGER NOT NULL DEFAULT 0,
+    language TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -83,6 +84,10 @@ CREATE INDEX IF NOT EXISTS idx_answers_chat_user ON answers(chat_id, user_id);
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(SCHEMA)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN language TEXT")
+        except aiosqlite.OperationalError:
+            pass
         await db.commit()
 
 
@@ -97,6 +102,19 @@ async def upsert_user(user_id: int, username: str | None, first_name: str | None
             """,
             (user_id, username, first_name),
         )
+        await db.commit()
+
+
+async def get_language(user_id: int) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT language FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def set_language(user_id: int, language: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
         await db.commit()
 
 
@@ -281,6 +299,12 @@ async def record_answer(
             (poll_id, session_id, chat_id, user_id, username, int(is_correct)),
         )
         await db.commit()
+
+
+async def poll_has_answers(poll_id: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT 1 FROM answers WHERE poll_id = ? LIMIT 1", (poll_id,))
+        return (await cursor.fetchone()) is not None
 
 
 async def get_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:

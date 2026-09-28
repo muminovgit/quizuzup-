@@ -7,6 +7,7 @@ and a Telegram Stars payment unlocks the unlimited "Pro" tier.
 
 import asyncio
 import logging
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
@@ -15,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
@@ -26,16 +28,42 @@ from aiogram.types import (
 import db
 from config import BOT_TOKEN, FREE_MAX_QUESTIONS, FREE_MAX_QUIZZES, POLL_OPEN_PERIOD, PRO_UPGRADE_STARS
 from excel_parser import ExcelParseError, parse_quiz_excel
+from translations import LANGUAGE_NAMES, t
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = Router()
 
+BASE_DIR = Path(__file__).parent
+TEMPLATE_PATH = BASE_DIR / "quiz_template.xlsx"
+
+MISS_STREAK_TO_PAUSE = 3
+
 
 class QuizUpload(StatesGroup):
     waiting_file = State()
     waiting_name = State()
+
+
+class QuizRunner:
+    """Runtime state for one quiz session running in a chat (pausable)."""
+
+    def __init__(self, chat_id: int, session_id: int, quiz_name: str, questions: list[dict], owner_id: int, lang: str):
+        self.chat_id = chat_id
+        self.session_id = session_id
+        self.quiz_name = quiz_name
+        self.questions = questions
+        self.owner_id = owner_id
+        self.lang = lang
+        self.index = 0
+        self.miss_streak = 0
+        self.running = asyncio.Event()
+        self.running.set()
+        self.stopped = False
+
+
+RUNNING_SESSIONS: dict[int, QuizRunner] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +99,16 @@ def _build_poll_options(question: dict) -> tuple[list[str], int]:
     return options, correct_index
 
 
-async def _require_owner(message: Message, quiz: dict | None) -> bool:
+async def _lang(user_id: int) -> str:
+    return await db.get_language(user_id) or "uz"
+
+
+async def _require_owner(message: Message, quiz: dict | None, lang: str) -> bool:
     if quiz is None:
-        await message.answer("I couldn't find a quiz with that name. Check /myquizzes.")
+        await message.answer(t("quiz_not_found", lang))
         return False
     if quiz["owner_id"] != message.from_user.id:
-        await message.answer("Only the admin who uploaded this quiz can do that.")
+        await message.answer(t("not_owner_start", lang))
         return False
     return True
 
@@ -94,24 +126,64 @@ def _quiz_list_keyboard(quizzes: list[dict], action: str) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _language_keyboard(mode: str) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=name, callback_data=f"setlang:{code}:{mode}")]
+        for code, name in LANGUAGE_NAMES.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _resume_keyboard(chat_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=t("resume_button", lang), callback_data=f"resume:{chat_id}")]]
+    )
+
+
+async def _send_welcome(bot: Bot, chat_id: int, lang: str) -> None:
+    await bot.send_message(
+        chat_id,
+        t("welcome", lang, max_quizzes=FREE_MAX_QUIZZES, max_questions=FREE_MAX_QUESTIONS),
+    )
+    if TEMPLATE_PATH.exists():
+        await bot.send_document(
+            chat_id,
+            FSInputFile(TEMPLATE_PATH),
+            caption=t("template_caption", lang),
+        )
+
+
 # ---------------------------------------------------------------------------
-# Basic commands
+# Language selection
 # ---------------------------------------------------------------------------
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    await message.answer(
-        "👋 Welcome to Quiz Bot!\n\n"
-        "/newquiz — upload an .xlsx file to create a quiz\n"
-        "/myquizzes — list your saved quizzes\n"
-        "/startquiz [name] — run a saved quiz in this chat\n"
-        "/deletequiz [name] — remove one of your quizzes\n"
-        "/leaderboard — top scorers in this chat\n"
-        "/upgrade — go Pro with Telegram Stars (unlimited quizzes & questions)\n\n"
-        f"Free tier: up to {FREE_MAX_QUIZZES} quizzes, {FREE_MAX_QUESTIONS} questions each."
-    )
+    lang = await db.get_language(message.from_user.id)
+    if lang is None:
+        await message.answer(t("choose_language", "en"), reply_markup=_language_keyboard("start"))
+        return
+    await _send_welcome(message.bot, message.chat.id, lang)
+
+
+@router.message(Command("language"))
+async def cmd_language(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
+    await message.answer(t("choose_language", lang), reply_markup=_language_keyboard("switch"))
+
+
+@router.callback_query(F.data.startswith("setlang:"))
+async def cb_set_language(callback: CallbackQuery) -> None:
+    _, code, mode = callback.data.split(":", 2)
+    await db.set_language(callback.from_user.id, code)
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if mode == "start":
+        await _send_welcome(callback.bot, callback.message.chat.id, code)
+    else:
+        await callback.message.answer(t("language_changed", code))
 
 
 # ---------------------------------------------------------------------------
@@ -122,25 +194,24 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("newquiz"))
 async def cmd_newquiz(message: Message, state: FSMContext) -> None:
     await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    lang = await _lang(message.from_user.id)
 
     if not await db.is_premium(message.from_user.id):
         existing = await db.count_quizzes_by_owner(message.from_user.id)
         if existing >= FREE_MAX_QUIZZES:
-            await message.answer(
-                f"You've reached the free tier limit of {FREE_MAX_QUIZZES} quizzes.\n"
-                "Use /deletequiz to remove one, or /upgrade to go Pro for unlimited quizzes."
-            )
+            await message.answer(t("limit_quizzes", lang, max_quizzes=FREE_MAX_QUIZZES))
             return
 
     await state.set_state(QuizUpload.waiting_file)
-    await message.answer("Send me the .xlsx file for your new quiz (use the quiz_template.xlsx format).")
+    await message.answer(t("send_file", lang))
 
 
 @router.message(QuizUpload.waiting_file, F.document)
 async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> None:
+    lang = await _lang(message.from_user.id)
     document = message.document
     if not document.file_name.lower().endswith(".xlsx"):
-        await message.answer("That doesn't look like an .xlsx file. Please send a valid Excel file.")
+        await message.answer(t("not_xlsx", lang))
         return
 
     file = await bot.get_file(document.file_id)
@@ -150,28 +221,23 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
     try:
         questions = parse_quiz_excel(file_bytes)
     except ExcelParseError as exc:
-        await message.answer(f"⚠️ Couldn't parse that file: {exc}\nPlease fix it and send it again.")
+        await message.answer(t("parse_error", lang, error=str(exc)))
         return
 
     if not await db.is_premium(message.from_user.id) and len(questions) > FREE_MAX_QUESTIONS:
-        await message.answer(
-            f"Free tier quizzes can have at most {FREE_MAX_QUESTIONS} questions "
-            f"(this file has {len(questions)}). Trim it down or /upgrade to go Pro."
-        )
+        await message.answer(t("question_limit", lang, max_questions=FREE_MAX_QUESTIONS, got=len(questions)))
         return
 
     default_name = document.file_name.rsplit(".", 1)[0][:50]
     await state.update_data(questions=questions, default_name=default_name)
     await state.set_state(QuizUpload.waiting_name)
-    await message.answer(
-        f"Parsed {len(questions)} questions ✅\n"
-        f"Send a short name to save this quiz as, or send /skip to use \"{default_name}\"."
-    )
+    await message.answer(t("parsed_ok", lang, count=len(questions), default_name=default_name))
 
 
 @router.message(QuizUpload.waiting_file)
 async def receive_quiz_file_invalid(message: Message) -> None:
-    await message.answer("Please upload the .xlsx file as a document, or /cancel to stop.")
+    lang = await _lang(message.from_user.id)
+    await message.answer(t("send_valid_file", lang))
 
 
 @router.message(QuizUpload.waiting_name, Command("skip"))
@@ -184,30 +250,28 @@ async def skip_quiz_name(message: Message, state: FSMContext) -> None:
 async def receive_quiz_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()[:50]
     if not name:
-        await message.answer("Please send a non-empty name.")
+        await message.answer(t("send_file", await _lang(message.from_user.id)))
         return
     data = await state.get_data()
     await _save_quiz(message, state, name, data["questions"])
 
 
 async def _save_quiz(message: Message, state: FSMContext, name: str, questions: list[dict]) -> None:
+    lang = await _lang(message.from_user.id)
     owner_id = message.from_user.id
     if await db.quiz_name_exists(owner_id, name):
         name = f"{name} ({len(questions)}q)"
 
-    quiz_id = await db.create_quiz(owner_id, name, questions)
+    await db.create_quiz(owner_id, name, questions)
     await state.clear()
-    await message.answer(
-        f"✅ Saved quiz \"{name}\" with {len(questions)} questions.\n"
-        f"Run it with /startquiz {name}"
-    )
+    await message.answer(t("quiz_saved", lang, name=name, count=len(questions)))
 
 
 @router.message(Command("cancel"), QuizUpload.waiting_file)
 @router.message(Command("cancel"), QuizUpload.waiting_name)
 async def cancel_upload(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Cancelled.")
+    await message.answer(t("cancelled", await _lang(message.from_user.id)))
 
 
 # ---------------------------------------------------------------------------
@@ -217,13 +281,15 @@ async def cancel_upload(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("myquizzes"))
 async def cmd_myquizzes(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
     quizzes = await db.list_quizzes_by_owner(message.from_user.id)
     if not quizzes:
-        await message.answer("You don't have any saved quizzes yet. Use /newquiz to create one.")
+        await message.answer(t("myquizzes_empty", lang))
         return
 
-    lines = [f"• {q['name']} — {q['question_count']} questions" for q in quizzes]
-    await message.answer("Your quizzes:\n" + "\n".join(lines))
+    suffix = t("questions_suffix", lang)
+    lines = [f"• {q['name']} — {q['question_count']} {suffix}" for q in quizzes]
+    await message.answer(t("myquizzes_header", lang) + "\n" + "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -233,49 +299,73 @@ async def cmd_myquizzes(message: Message) -> None:
 
 @router.message(Command("startquiz"))
 async def cmd_startquiz(message: Message, command: CommandObject, bot: Bot) -> None:
+    lang = await _lang(message.from_user.id)
+
+    if message.chat.id in RUNNING_SESSIONS:
+        await message.answer(t("quiz_already_running", lang))
+        return
+
     if command.args:
         quiz = await db.get_quiz_by_name(message.from_user.id, command.args.strip())
-        if not await _require_owner(message, quiz):
+        if not await _require_owner(message, quiz, lang):
             return
-        await _run_quiz(bot, message.chat.id, message.from_user.id, quiz)
+        await _run_quiz(bot, message.chat.id, message.from_user.id, quiz, lang)
         return
 
     quizzes = await db.list_quizzes_by_owner(message.from_user.id)
     if not quizzes:
-        await message.answer("You don't have any saved quizzes yet. Use /newquiz to create one.")
+        await message.answer(t("myquizzes_empty", lang))
         return
-    await message.answer("Pick a quiz to start:", reply_markup=_quiz_list_keyboard(quizzes, "startquiz"))
+    await message.answer(t("pick_quiz_start", lang), reply_markup=_quiz_list_keyboard(quizzes, "startquiz"))
 
 
 @router.callback_query(F.data.startswith("startquiz:"))
 async def cb_startquiz(callback: CallbackQuery, bot: Bot) -> None:
+    lang = await _lang(callback.from_user.id)
+    if callback.message.chat.id in RUNNING_SESSIONS:
+        await callback.answer(t("quiz_already_running", lang), show_alert=True)
+        return
+
     quiz_id = int(callback.data.split(":", 1)[1])
     quiz = await db.get_quiz_by_id(quiz_id)
     if quiz is None or quiz["owner_id"] != callback.from_user.id:
-        await callback.answer("Only the quiz owner can start it.", show_alert=True)
+        await callback.answer(t("not_owner_start", lang), show_alert=True)
         return
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await _run_quiz(bot, callback.message.chat.id, callback.from_user.id, quiz)
+    await _run_quiz(bot, callback.message.chat.id, callback.from_user.id, quiz, lang)
 
 
-async def _run_quiz(bot: Bot, chat_id: int, started_by: int, quiz: dict) -> None:
+async def _run_quiz(bot: Bot, chat_id: int, started_by: int, quiz: dict, lang: str) -> None:
     questions = await db.get_questions(quiz["quiz_id"])
     if not questions:
-        await bot.send_message(chat_id, "This quiz has no questions.")
+        await bot.send_message(chat_id, t("quiz_no_questions", lang))
         return
 
     session_id = await db.create_session(quiz["quiz_id"], chat_id, started_by)
-    await bot.send_message(chat_id, f"🧠 Starting quiz: {quiz['name']} ({len(questions)} questions)")
-    asyncio.create_task(_send_quiz_questions(bot, chat_id, session_id, questions))
+    runner = QuizRunner(chat_id, session_id, quiz["name"], questions, started_by, lang)
+    RUNNING_SESSIONS[chat_id] = runner
+
+    await bot.send_message(chat_id, t("quiz_starting", lang, name=quiz["name"], count=len(questions)))
+    try:
+        await bot.send_dice(chat_id, emoji="🎯")
+    except Exception:
+        logger.debug("send_dice flair failed", exc_info=True)
+
+    asyncio.create_task(_run_quiz_loop(bot, runner))
 
 
-async def _send_quiz_questions(bot: Bot, chat_id: int, session_id: int, questions: list[dict]) -> None:
-    for question in questions:
+async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
+    while runner.index < len(runner.questions):
+        await runner.running.wait()
+        if runner.stopped:
+            return
+
+        question = runner.questions[runner.index]
         options, correct_index = _build_poll_options(question)
         try:
             poll_message = await bot.send_poll(
-                chat_id=chat_id,
+                chat_id=runner.chat_id,
                 question=_truncate(question["question_text"], TG_QUESTION_LIMIT),
                 options=options,
                 type="quiz",
@@ -286,19 +376,84 @@ async def _send_quiz_questions(bot: Bot, chat_id: int, session_id: int, question
             )
         except Exception:
             logger.exception("Failed to send poll for question %s", question["question_id"])
+            runner.index += 1
             continue
 
         await db.save_poll_map(
             poll_id=poll_message.poll.id,
-            session_id=session_id,
+            session_id=runner.session_id,
             question_id=question["question_id"],
             correct_option=correct_index,
-            chat_id=chat_id,
+            chat_id=runner.chat_id,
         )
-        await asyncio.sleep(POLL_OPEN_PERIOD + 2)
+        runner.index += 1
 
-    await db.finish_session(session_id)
-    await bot.send_message(chat_id, "🏁 Quiz finished! Check /leaderboard for the top scorers.")
+        await asyncio.sleep(POLL_OPEN_PERIOD + 2)
+        if runner.stopped:
+            return
+
+        if await db.poll_has_answers(poll_message.poll.id):
+            runner.miss_streak = 0
+        else:
+            runner.miss_streak += 1
+            if runner.miss_streak >= MISS_STREAK_TO_PAUSE and runner.index < len(runner.questions):
+                runner.running.clear()
+                await bot.send_message(
+                    runner.chat_id,
+                    t("quiz_paused_auto", runner.lang, streak=runner.miss_streak),
+                    reply_markup=_resume_keyboard(runner.chat_id, runner.lang),
+                )
+                runner.miss_streak = 0
+
+    RUNNING_SESSIONS.pop(runner.chat_id, None)
+    await db.finish_session(runner.session_id)
+    try:
+        await bot.send_dice(runner.chat_id, emoji="🎉")
+    except Exception:
+        pass
+    await bot.send_message(runner.chat_id, t("quiz_finished", runner.lang))
+
+
+# ---------------------------------------------------------------------------
+# /stop and resume
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("stop"))
+async def cmd_stop(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
+    runner = RUNNING_SESSIONS.get(message.chat.id)
+    if runner is None:
+        await message.answer(t("no_active_quiz", lang))
+        return
+    if runner.owner_id != message.from_user.id:
+        await message.answer(t("not_owner_stop", lang))
+        return
+
+    runner.running.clear()
+    await message.answer(
+        t("quiz_paused_manual", runner.lang),
+        reply_markup=_resume_keyboard(message.chat.id, runner.lang),
+    )
+
+
+@router.callback_query(F.data.startswith("resume:"))
+async def cb_resume(callback: CallbackQuery) -> None:
+    lang = await _lang(callback.from_user.id)
+    chat_id = int(callback.data.split(":", 1)[1])
+    runner = RUNNING_SESSIONS.get(chat_id)
+    if runner is None:
+        await callback.answer(t("no_active_quiz", lang), show_alert=True)
+        return
+    if runner.owner_id != callback.from_user.id:
+        await callback.answer(t("not_owner_resume", lang), show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    runner.miss_streak = 0
+    runner.running.set()
+    await callback.message.answer(t("quiz_resumed", runner.lang))
 
 
 # ---------------------------------------------------------------------------
@@ -308,33 +463,38 @@ async def _send_quiz_questions(bot: Bot, chat_id: int, session_id: int, question
 
 @router.message(Command("deletequiz"))
 async def cmd_deletequiz(message: Message, command: CommandObject) -> None:
+    lang = await _lang(message.from_user.id)
+
     if command.args:
         quiz = await db.get_quiz_by_name(message.from_user.id, command.args.strip())
-        if not await _require_owner(message, quiz):
+        if quiz is None:
+            await message.answer(t("quiz_not_found", lang))
+            return
+        if quiz["owner_id"] != message.from_user.id:
+            await message.answer(t("not_owner_delete", lang))
             return
         await db.delete_quiz(quiz["quiz_id"])
-        await message.answer(f"🗑️ Deleted quiz \"{quiz['name']}\".")
+        await message.answer(t("deleted_quiz", lang, name=quiz["name"]))
         return
 
     quizzes = await db.list_quizzes_by_owner(message.from_user.id)
     if not quizzes:
-        await message.answer("You don't have any saved quizzes yet.")
+        await message.answer(t("myquizzes_empty", lang))
         return
-    await message.answer(
-        "Pick a quiz to delete:", reply_markup=_quiz_list_keyboard(quizzes, "deletequiz")
-    )
+    await message.answer(t("pick_quiz_delete", lang), reply_markup=_quiz_list_keyboard(quizzes, "deletequiz"))
 
 
 @router.callback_query(F.data.startswith("deletequiz:"))
 async def cb_deletequiz(callback: CallbackQuery) -> None:
+    lang = await _lang(callback.from_user.id)
     quiz_id = int(callback.data.split(":", 1)[1])
     quiz = await db.get_quiz_by_id(quiz_id)
     if quiz is None or quiz["owner_id"] != callback.from_user.id:
-        await callback.answer("Only the quiz owner can delete it.", show_alert=True)
+        await callback.answer(t("not_owner_delete", lang), show_alert=True)
         return
     await db.delete_quiz(quiz_id)
-    await callback.answer("Deleted.")
-    await callback.message.edit_text(f"🗑️ Deleted quiz \"{quiz['name']}\".")
+    await callback.answer()
+    await callback.message.edit_text(t("deleted_quiz", lang, name=quiz["name"]))
 
 
 # ---------------------------------------------------------------------------
@@ -344,19 +504,21 @@ async def cb_deletequiz(callback: CallbackQuery) -> None:
 
 @router.message(Command("leaderboard"))
 async def cmd_leaderboard(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
     rows = await db.get_leaderboard(message.chat.id)
     if not rows:
-        await message.answer("No answers recorded in this chat yet. Run a quiz with /startquiz!")
+        await message.answer(t("leaderboard_empty", lang))
         return
 
     medals = ["🥇", "🥈", "🥉"]
+    correct_word = t("correct_suffix", lang)
     lines = []
     for i, row in enumerate(rows):
         prefix = medals[i] if i < len(medals) else f"{i + 1}."
         name = row["username"] or f"user {row['user_id']}"
-        lines.append(f"{prefix} {name} — {row['correct_count']}/{row['total_answered']} correct")
+        lines.append(f"{prefix} {name} — {row['correct_count']}/{row['total_answered']} {correct_word}")
 
-    await message.answer("🏆 Leaderboard\n" + "\n".join(lines))
+    await message.answer(t("leaderboard_header", lang) + "\n" + "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -366,17 +528,18 @@ async def cmd_leaderboard(message: Message) -> None:
 
 @router.message(Command("upgrade"))
 async def cmd_upgrade(message: Message, bot: Bot) -> None:
+    lang = await _lang(message.from_user.id)
     if await db.is_premium(message.from_user.id):
-        await message.answer("You're already on the Pro tier. Thanks for your support! 🌟")
+        await message.answer(t("already_pro", lang))
         return
 
     await bot.send_invoice(
         chat_id=message.chat.id,
-        title="Quiz Bot Pro",
-        description=f"Unlock unlimited quizzes and unlimited questions per quiz ({PRO_UPGRADE_STARS} Stars).",
+        title=t("pro_title", lang),
+        description=t("pro_description", lang, stars=PRO_UPGRADE_STARS),
         payload=f"pro_upgrade:{message.from_user.id}",
         currency="XTR",
-        prices=[LabeledPrice(label="Quiz Bot Pro", amount=PRO_UPGRADE_STARS)],
+        prices=[LabeledPrice(label=t("pro_title", lang), amount=PRO_UPGRADE_STARS)],
         provider_token="",
     )
 
@@ -388,6 +551,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
 
 @router.message(F.successful_payment)
 async def process_successful_payment(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
     payment = message.successful_payment
     await db.set_premium(message.from_user.id)
     await db.record_payment(
@@ -395,7 +559,7 @@ async def process_successful_payment(message: Message) -> None:
         stars_amount=payment.total_amount,
         telegram_charge_id=payment.telegram_payment_charge_id,
     )
-    await message.answer("🌟 Payment received! You're now on the Pro tier — unlimited quizzes and questions.")
+    await message.answer(t("payment_success", lang))
 
 
 # ---------------------------------------------------------------------------
