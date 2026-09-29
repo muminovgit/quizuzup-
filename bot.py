@@ -104,6 +104,15 @@ async def _lang(user_id: int) -> str:
     return await db.get_language(user_id) or "uz"
 
 
+def _not_a_command(message: Message) -> bool:
+    """True unless the message text looks like a /command.
+
+    Used to keep FSM catch-all handlers from swallowing commands such as
+    /cancel or /upgrade while an upload is in progress.
+    """
+    return not (message.text and message.text.startswith("/"))
+
+
 async def _require_owner(message: Message, quiz: dict | None, lang: str) -> bool:
     if quiz is None:
         await message.answer(t("quiz_not_found", lang))
@@ -262,7 +271,7 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
     await message.answer(t("parsed_ok", lang, count=len(questions), default_name=default_name))
 
 
-@router.message(QuizUpload.waiting_file)
+@router.message(QuizUpload.waiting_file, _not_a_command)
 async def receive_quiz_file_invalid(message: Message) -> None:
     lang = await _lang(message.from_user.id)
     await message.answer(t("send_valid_file", lang))
@@ -274,7 +283,7 @@ async def skip_quiz_name(message: Message, state: FSMContext) -> None:
     await _save_quiz(message, state, data["default_name"], data["questions"])
 
 
-@router.message(QuizUpload.waiting_name, F.text)
+@router.message(QuizUpload.waiting_name, F.text, _not_a_command)
 async def receive_quiz_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()[:50]
     if not name:
