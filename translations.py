@@ -207,6 +207,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "▶️ Продолжить",
         "en": "▶️ Resume",
     },
+    "stop_button": {
+        "uz": "⏸ To'xtatish",
+        "ru": "⏸ Остановить",
+        "en": "⏸ Stop",
+    },
+    "quiz_error": {
+        "uz": "⚠️ Nimadir xato ketdi, test to'xtatildi. Qaytadan /startquiz qiling.",
+        "ru": "⚠️ Что-то пошло не так, тест остановлен. Запустите заново через /startquiz.",
+        "en": "⚠️ Something went wrong and the quiz was stopped. Try /startquiz again.",
+    },
+    "add_to_group": {
+        "uz": "➕ Guruhga qo'shish",
+        "ru": "➕ Добавить в группу",
+        "en": "➕ Add me to a group",
+    },
     "no_active_quiz": {
         "uz": "ℹ️ Bu chatda hozir ishlab turgan test yo'q.",
         "ru": "ℹ️ В этом чате сейчас нет активного теста.",

@@ -38,7 +38,7 @@ router = Router()
 BASE_DIR = Path(__file__).parent
 TEMPLATE_PATH = BASE_DIR / "quiz_template.xlsx"
 
-MISS_STREAK_TO_PAUSE = 3
+MISS_STREAK_TO_PAUSE = 4
 
 
 class QuizUpload(StatesGroup):
@@ -64,6 +64,7 @@ class QuizRunner:
 
 
 RUNNING_SESSIONS: dict[int, QuizRunner] = {}
+BOT_USERNAME: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -140,10 +141,27 @@ def _resume_keyboard(chat_id: int, lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def _stop_keyboard(chat_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=t("stop_button", lang), callback_data=f"stopquiz:{chat_id}")]]
+    )
+
+
+def _add_to_group_keyboard(lang: str) -> InlineKeyboardMarkup | None:
+    if not BOT_USERNAME:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t("add_to_group", lang), url=f"https://t.me/{BOT_USERNAME}?startgroup=true")]
+        ]
+    )
+
+
 async def _send_welcome(bot: Bot, chat_id: int, lang: str) -> None:
     await bot.send_message(
         chat_id,
         t("welcome", lang, max_quizzes=FREE_MAX_QUIZZES, max_questions=FREE_MAX_QUESTIONS),
+        reply_markup=_add_to_group_keyboard(lang),
     )
     if TEMPLATE_PATH.exists():
         await bot.send_document(
@@ -151,6 +169,16 @@ async def _send_welcome(bot: Bot, chat_id: int, lang: str) -> None:
             FSInputFile(TEMPLATE_PATH),
             caption=t("template_caption", lang),
         )
+
+
+async def _pause_quiz(bot: Bot, runner: QuizRunner, message_key: str, **kwargs: object) -> None:
+    runner.running.clear()
+    runner.miss_streak = 0
+    await bot.send_message(
+        runner.chat_id,
+        t(message_key, runner.lang, **kwargs),
+        reply_markup=_resume_keyboard(runner.chat_id, runner.lang),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +374,11 @@ async def _run_quiz(bot: Bot, chat_id: int, started_by: int, quiz: dict, lang: s
     runner = QuizRunner(chat_id, session_id, quiz["name"], questions, started_by, lang)
     RUNNING_SESSIONS[chat_id] = runner
 
-    await bot.send_message(chat_id, t("quiz_starting", lang, name=quiz["name"], count=len(questions)))
+    await bot.send_message(
+        chat_id,
+        t("quiz_starting", lang, name=quiz["name"], count=len(questions)),
+        reply_markup=_stop_keyboard(chat_id, lang),
+    )
     try:
         await bot.send_dice(chat_id, emoji="🎯")
     except Exception:
@@ -356,62 +388,68 @@ async def _run_quiz(bot: Bot, chat_id: int, started_by: int, quiz: dict, lang: s
 
 
 async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
-    while runner.index < len(runner.questions):
-        await runner.running.wait()
-        if runner.stopped:
-            return
-
-        question = runner.questions[runner.index]
-        options, correct_index = _build_poll_options(question)
-        try:
-            poll_message = await bot.send_poll(
-                chat_id=runner.chat_id,
-                question=_truncate(question["question_text"], TG_QUESTION_LIMIT),
-                options=options,
-                type="quiz",
-                correct_option_id=correct_index,
-                is_anonymous=False,
-                open_period=POLL_OPEN_PERIOD,
-                explanation=_truncate(question["explanation"], TG_EXPLANATION_LIMIT),
-            )
-        except Exception:
-            logger.exception("Failed to send poll for question %s", question["question_id"])
-            runner.index += 1
-            continue
-
-        await db.save_poll_map(
-            poll_id=poll_message.poll.id,
-            session_id=runner.session_id,
-            question_id=question["question_id"],
-            correct_option=correct_index,
-            chat_id=runner.chat_id,
-        )
-        runner.index += 1
-
-        await asyncio.sleep(POLL_OPEN_PERIOD + 2)
-        if runner.stopped:
-            return
-
-        if await db.poll_has_answers(poll_message.poll.id):
-            runner.miss_streak = 0
-        else:
-            runner.miss_streak += 1
-            if runner.miss_streak >= MISS_STREAK_TO_PAUSE and runner.index < len(runner.questions):
-                runner.running.clear()
-                await bot.send_message(
-                    runner.chat_id,
-                    t("quiz_paused_auto", runner.lang, streak=runner.miss_streak),
-                    reply_markup=_resume_keyboard(runner.chat_id, runner.lang),
-                )
-                runner.miss_streak = 0
-
-    RUNNING_SESSIONS.pop(runner.chat_id, None)
-    await db.finish_session(runner.session_id)
+    # Guarantee RUNNING_SESSIONS is always cleaned up, even on an unexpected
+    # crash -- otherwise the chat would get permanently stuck refusing new
+    # /startquiz calls with "a quiz is already running".
     try:
-        await bot.send_dice(runner.chat_id, emoji="🎉")
+        while runner.index < len(runner.questions):
+            await runner.running.wait()
+            if runner.stopped:
+                return
+
+            question = runner.questions[runner.index]
+            options, correct_index = _build_poll_options(question)
+            try:
+                poll_message = await bot.send_poll(
+                    chat_id=runner.chat_id,
+                    question=_truncate(question["question_text"], TG_QUESTION_LIMIT),
+                    options=options,
+                    type="quiz",
+                    correct_option_id=correct_index,
+                    is_anonymous=False,
+                    open_period=POLL_OPEN_PERIOD,
+                    explanation=_truncate(question["explanation"], TG_EXPLANATION_LIMIT),
+                )
+            except Exception:
+                logger.exception("Failed to send poll for question %s", question["question_id"])
+                runner.index += 1
+                continue
+
+            await db.save_poll_map(
+                poll_id=poll_message.poll.id,
+                session_id=runner.session_id,
+                question_id=question["question_id"],
+                correct_option=correct_index,
+                chat_id=runner.chat_id,
+            )
+            runner.index += 1
+
+            await asyncio.sleep(POLL_OPEN_PERIOD + 2)
+            if runner.stopped:
+                return
+
+            if await db.poll_has_answers(poll_message.poll.id):
+                runner.miss_streak = 0
+            else:
+                runner.miss_streak += 1
+                if runner.miss_streak >= MISS_STREAK_TO_PAUSE and runner.index < len(runner.questions):
+                    streak = runner.miss_streak
+                    await _pause_quiz(bot, runner, "quiz_paused_auto", streak=streak)
+
+        await db.finish_session(runner.session_id)
+        try:
+            await bot.send_dice(runner.chat_id, emoji="🎉")
+        except Exception:
+            pass
+        await bot.send_message(runner.chat_id, t("quiz_finished", runner.lang))
     except Exception:
-        pass
-    await bot.send_message(runner.chat_id, t("quiz_finished", runner.lang))
+        logger.exception("Quiz loop crashed for chat %s", runner.chat_id)
+        try:
+            await bot.send_message(runner.chat_id, t("quiz_error", runner.lang))
+        except Exception:
+            pass
+    finally:
+        RUNNING_SESSIONS.pop(runner.chat_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +458,7 @@ async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
 
 
 @router.message(Command("stop"))
-async def cmd_stop(message: Message) -> None:
+async def cmd_stop(message: Message, bot: Bot) -> None:
     lang = await _lang(message.from_user.id)
     runner = RUNNING_SESSIONS.get(message.chat.id)
     if runner is None:
@@ -430,11 +468,24 @@ async def cmd_stop(message: Message) -> None:
         await message.answer(t("not_owner_stop", lang))
         return
 
-    runner.running.clear()
-    await message.answer(
-        t("quiz_paused_manual", runner.lang),
-        reply_markup=_resume_keyboard(message.chat.id, runner.lang),
-    )
+    await _pause_quiz(bot, runner, "quiz_paused_manual")
+
+
+@router.callback_query(F.data.startswith("stopquiz:"))
+async def cb_stopquiz(callback: CallbackQuery, bot: Bot) -> None:
+    lang = await _lang(callback.from_user.id)
+    chat_id = int(callback.data.split(":", 1)[1])
+    runner = RUNNING_SESSIONS.get(chat_id)
+    if runner is None:
+        await callback.answer(t("no_active_quiz", lang), show_alert=True)
+        return
+    if runner.owner_id != callback.from_user.id:
+        await callback.answer(t("not_owner_stop", lang), show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _pause_quiz(bot, runner, "quiz_paused_manual")
 
 
 @router.callback_query(F.data.startswith("resume:"))
@@ -602,6 +653,10 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN)
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(router)
+
+    global BOT_USERNAME
+    me = await bot.get_me()
+    BOT_USERNAME = me.username
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dispatcher.start_polling(bot)
