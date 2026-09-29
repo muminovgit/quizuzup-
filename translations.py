@@ -312,6 +312,34 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "❌ Тариф Pro отключён для {target}.",
         "en": "❌ Pro tier revoked for {target}.",
     },
+    "web_login_issued": {
+        "uz": (
+            "🌐 Veb-sayt orqali ham testlarni yechishingiz mumkin!\n\n"
+            "🔗 Sayt: {url}\n"
+            "👤 Login: `{username}`\n"
+            "🔑 Parol: `{password}`\n\n"
+            "Saytda xato javob bergan savollaringiz \"Xatolarim\" bo'limida saqlanadi va qayta yechishingiz mumkin."
+        ),
+        "ru": (
+            "🌐 Тесты можно проходить и на сайте!\n\n"
+            "🔗 Сайт: {url}\n"
+            "👤 Логин: `{username}`\n"
+            "🔑 Пароль: `{password}`\n\n"
+            "Вопросы, на которые вы ответили неправильно, сохраняются в разделе \"Мои ошибки\" — их можно пересдать."
+        ),
+        "en": (
+            "🌐 You can also take quizzes on the website!\n\n"
+            "🔗 Site: {url}\n"
+            "👤 Login: `{username}`\n"
+            "🔑 Password: `{password}`\n\n"
+            "Questions you get wrong are saved in \"My Mistakes\" so you can review and retry them."
+        ),
+    },
+    "webportal_not_premium": {
+        "uz": "🌐 Veb-portal faqat Pro foydalanuvchilar uchun. /upgrade orqali Pro oling.",
+        "ru": "🌐 Веб-портал доступен только для Pro. Оформите /upgrade.",
+        "en": "🌐 The web portal is Pro-only. Get Pro with /upgrade.",
+    },
 }
 
 

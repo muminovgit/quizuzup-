@@ -26,6 +26,7 @@ from aiogram.types import (
 )
 
 import db
+from auth import generate_password, hash_password
 from config import (
     ADMIN_CONTACT_USERNAME,
     ADMIN_IDS,
@@ -34,6 +35,7 @@ from config import (
     FREE_MAX_QUIZZES,
     POLL_OPEN_PERIOD,
     PRO_UPGRADE_STARS,
+    WEB_URL,
 )
 from excel_parser import ExcelParseError, parse_quiz_excel
 from translations import LANGUAGE_NAMES, t
@@ -196,6 +198,26 @@ async def _pause_quiz(bot: Bot, runner: QuizRunner, message_key: str, **kwargs: 
         t(message_key, runner.lang, **kwargs),
         reply_markup=_resume_keyboard(runner.chat_id, runner.lang),
     )
+
+
+async def _issue_web_login(bot: Bot, user_id: int, lang: str) -> None:
+    """(Re)issues web-portal credentials for a Pro user and DMs them the login."""
+    if not WEB_URL:
+        return
+
+    # user_id-derived, so it's always unique regardless of what the account's
+    # Telegram username/first name happens to be (or if it's missing).
+    login = f"user{user_id}"
+    password = generate_password()
+    await db.set_web_credentials(user_id, login, hash_password(password))
+
+    try:
+        await bot.send_message(
+            user_id,
+            t("web_login_issued", lang, url=WEB_URL, username=login, password=password),
+        )
+    except Exception:
+        logger.warning("Could not DM web login to user %s (they may not have started the bot)", user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +643,7 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
 
 
 @router.message(F.successful_payment)
-async def process_successful_payment(message: Message) -> None:
+async def process_successful_payment(message: Message, bot: Bot) -> None:
     lang = await _lang(message.from_user.id)
     payment = message.successful_payment
     await db.set_premium(message.from_user.id)
@@ -631,6 +653,7 @@ async def process_successful_payment(message: Message) -> None:
         telegram_charge_id=payment.telegram_payment_charge_id,
     )
     await message.answer(t("payment_success", lang))
+    await _issue_web_login(bot, message.from_user.id, lang)
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +684,7 @@ async def _resolve_target_user(message: Message, command: CommandObject) -> tupl
 
 
 @router.message(Command("grantpro"))
-async def cmd_grantpro(message: Message, command: CommandObject) -> None:
+async def cmd_grantpro(message: Message, command: CommandObject, bot: Bot) -> None:
     if message.from_user.id not in ADMIN_IDS:
         return
     lang = await _lang(message.from_user.id)
@@ -671,6 +694,16 @@ async def cmd_grantpro(message: Message, command: CommandObject) -> None:
         return
     await db.set_premium(user_id)
     await message.answer(t("grantpro_done", lang, target=label or user_id))
+    await _issue_web_login(bot, user_id, await _lang(user_id))
+
+
+@router.message(Command("webportal"))
+async def cmd_webportal(message: Message, bot: Bot) -> None:
+    lang = await _lang(message.from_user.id)
+    if not await db.is_premium(message.from_user.id):
+        await message.answer(t("webportal_not_premium", lang))
+        return
+    await _issue_web_login(bot, message.from_user.id, lang)
 
 
 @router.message(Command("revokepro"))

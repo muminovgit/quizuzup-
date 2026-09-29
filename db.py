@@ -75,14 +75,45 @@ CREATE TABLE IF NOT EXISTS payments (
     paid_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Web portal: a Pro user gets a username/password to take the same quizzes
+-- on the standalone website, with a "mistakes" review/retry list.
+CREATE TABLE IF NOT EXISTS web_credentials (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
+
+-- One row per (user, question): upserted on every answer/retry, so a
+-- question drops out of "mistakes" the moment it's answered correctly.
+CREATE TABLE IF NOT EXISTS web_attempts (
+    user_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    quiz_id INTEGER NOT NULL,
+    selected_option INTEGER NOT NULL,
+    is_correct INTEGER NOT NULL,
+    answered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, question_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_quizzes_owner ON quizzes(owner_id);
 CREATE INDEX IF NOT EXISTS idx_questions_quiz ON questions(quiz_id);
 CREATE INDEX IF NOT EXISTS idx_answers_chat_user ON answers(chat_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_web_attempts_user ON web_attempts(user_id);
 """
 
 
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
         try:
             await db.execute("ALTER TABLE users ADD COLUMN language TEXT")
@@ -345,6 +376,132 @@ async def get_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:
             LIMIT ?
             """,
             (chat_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Web portal: credentials, sessions, quiz-taking, mistakes
+# ---------------------------------------------------------------------------
+
+
+async def set_web_credentials(user_id: int, username: str, password_hash: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO web_credentials (user_id, username, password_hash) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET username = excluded.username,
+                                                password_hash = excluded.password_hash
+            """,
+            (user_id, username, password_hash),
+        )
+        await db.commit()
+
+
+async def get_web_credentials_by_username(username: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM web_credentials WHERE username = ?", (username,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_web_credentials_by_user_id(user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM web_credentials WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def create_web_session(token: str, user_id: int, expires_at: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO web_sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, expires_at),
+        )
+        await db.commit()
+
+
+async def get_web_session(token: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM web_sessions WHERE token = ? AND expires_at > datetime('now')",
+            (token,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def delete_web_session(token: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM web_sessions WHERE token = ?", (token,))
+        await db.commit()
+
+
+async def list_all_quizzes() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT q.quiz_id, q.name, COUNT(qs.question_id) AS question_count
+            FROM quizzes q
+            LEFT JOIN questions qs ON qs.quiz_id = q.quiz_id
+            GROUP BY q.quiz_id
+            ORDER BY q.created_at DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_question_by_id(question_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM questions WHERE question_id = ?", (question_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def record_web_attempt(
+    user_id: int, quiz_id: int, question_id: int, selected_option: int, is_correct: bool
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO web_attempts (user_id, quiz_id, question_id, selected_option, is_correct)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, question_id) DO UPDATE SET
+                selected_option = excluded.selected_option,
+                is_correct = excluded.is_correct,
+                answered_at = datetime('now')
+            """,
+            (user_id, quiz_id, question_id, selected_option, int(is_correct)),
+        )
+        await db.commit()
+
+
+async def get_mistakes(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT wa.question_id, wa.quiz_id, wa.selected_option, wa.answered_at,
+                   q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
+                   q.correct_option, q.explanation, qz.name AS quiz_name
+            FROM web_attempts wa
+            JOIN questions q ON q.question_id = wa.question_id
+            JOIN quizzes qz ON qz.quiz_id = wa.quiz_id
+            WHERE wa.user_id = ? AND wa.is_correct = 0
+            ORDER BY wa.answered_at DESC
+            """,
+            (user_id,),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

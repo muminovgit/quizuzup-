@@ -1,11 +1,18 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Resolve relative to this file, not the process's current working
+# directory -- the bot and the web API are launched from different
+# directories (webapi/ has its own cwd) and must share one .env/DB.
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-DB_PATH = os.getenv("DB_PATH", "quizbot.db")
+
+_db_path = os.getenv("DB_PATH", "quizbot.db")
+DB_PATH = _db_path if os.path.isabs(_db_path) else str(BASE_DIR / _db_path)
 
 # Telegram user IDs allowed to run /grantpro and /revokepro (manual Pro
 # activation for admins who take payment outside Telegram Stars -- cash,
@@ -25,3 +32,6 @@ PRO_UPGRADE_STARS = 100
 
 # How long each poll stays open, in seconds
 POLL_OPEN_PERIOD = 30
+
+# Public URL of the standalone web portal (shown in login messages)
+WEB_URL = os.getenv("WEB_URL", "")
