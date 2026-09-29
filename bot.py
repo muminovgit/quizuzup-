@@ -26,7 +26,15 @@ from aiogram.types import (
 )
 
 import db
-from config import BOT_TOKEN, FREE_MAX_QUESTIONS, FREE_MAX_QUIZZES, POLL_OPEN_PERIOD, PRO_UPGRADE_STARS
+from config import (
+    ADMIN_CONTACT_USERNAME,
+    ADMIN_IDS,
+    BOT_TOKEN,
+    FREE_MAX_QUESTIONS,
+    FREE_MAX_QUIZZES,
+    POLL_OPEN_PERIOD,
+    PRO_UPGRADE_STARS,
+)
 from excel_parser import ExcelParseError, parse_quiz_excel
 from translations import LANGUAGE_NAMES, t
 
@@ -603,6 +611,9 @@ async def cmd_upgrade(message: Message, bot: Bot) -> None:
         provider_token="",
     )
 
+    if ADMIN_CONTACT_USERNAME:
+        await message.answer(t("upgrade_alt_payment", lang, admin=ADMIN_CONTACT_USERNAME))
+
 
 @router.pre_checkout_query()
 async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
@@ -620,6 +631,59 @@ async def process_successful_payment(message: Message) -> None:
         telegram_charge_id=payment.telegram_payment_charge_id,
     )
     await message.answer(t("payment_success", lang))
+
+
+# ---------------------------------------------------------------------------
+# Manual Pro activation for out-of-band payment (cash, Click, Payme, etc.)
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("myid"))
+async def cmd_myid(message: Message) -> None:
+    lang = await _lang(message.from_user.id)
+    await message.answer(t("myid_reply", lang, id=message.from_user.id))
+
+
+async def _resolve_target_user(message: Message, command: CommandObject) -> tuple[int | None, str | None]:
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        return target.id, target.username or target.first_name
+    if command.args:
+        arg = command.args.strip()
+        if arg.startswith("@"):
+            row = await db.get_user_by_username(arg[1:])
+            if row:
+                return row["user_id"], row["username"] or str(row["user_id"])
+            return None, None
+        if arg.lstrip("-").isdigit():
+            return int(arg), arg
+    return None, None
+
+
+@router.message(Command("grantpro"))
+async def cmd_grantpro(message: Message, command: CommandObject) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    lang = await _lang(message.from_user.id)
+    user_id, label = await _resolve_target_user(message, command)
+    if user_id is None:
+        await message.answer(t("grantpro_usage", lang))
+        return
+    await db.set_premium(user_id)
+    await message.answer(t("grantpro_done", lang, target=label or user_id))
+
+
+@router.message(Command("revokepro"))
+async def cmd_revokepro(message: Message, command: CommandObject) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    lang = await _lang(message.from_user.id)
+    user_id, label = await _resolve_target_user(message, command)
+    if user_id is None:
+        await message.answer(t("grantpro_usage", lang))
+        return
+    await db.revoke_premium(user_id)
+    await message.answer(t("revokepro_done", lang, target=label or user_id))
 
 
 # ---------------------------------------------------------------------------

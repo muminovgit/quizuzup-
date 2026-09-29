@@ -262,6 +262,56 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "🌟 Оплата получена! Теперь у вас тариф Pro — неограниченные тесты и вопросы.",
         "en": "🌟 Payment received! You're now on the Pro tier — unlimited quizzes and questions.",
     },
+    "upgrade_alt_payment": {
+        "uz": (
+            "💳 Stars orqali to'lay olmasangiz: administratorga murojaat qiling — @{admin}.\n"
+            "ID raqamingizni /myid orqali oling va shu raqamni administratorga yuboring — "
+            "u sizga qo'lda Pro tarifni faollashtiradi."
+        ),
+        "ru": (
+            "💳 Если не можете оплатить через Stars: напишите администратору — @{admin}.\n"
+            "Получите свой ID командой /myid и отправьте его администратору — "
+            "он вручную активирует вам тариф Pro."
+        ),
+        "en": (
+            "💳 Can't pay with Stars? Contact the admin — @{admin}.\n"
+            "Get your ID with /myid and send it to them — they'll activate Pro manually."
+        ),
+    },
+    "myid_reply": {
+        "uz": "🆔 Sizning Telegram ID: `{id}`",
+        "ru": "🆔 Ваш Telegram ID: `{id}`",
+        "en": "🆔 Your Telegram ID: `{id}`",
+    },
+    "grantpro_usage": {
+        "uz": (
+            "Foydalanish: /grantpro <user_id yoki @username>\n"
+            "Yoki foydalanuvchining xabariga javob (reply) qilib /grantpro deb yozing."
+        ),
+        "ru": (
+            "Использование: /grantpro <user_id или @username>\n"
+            "Либо ответьте (reply) на сообщение пользователя командой /grantpro."
+        ),
+        "en": (
+            "Usage: /grantpro <user_id or @username>\n"
+            "Or reply to the user's message with /grantpro."
+        ),
+    },
+    "grantpro_not_found": {
+        "uz": "❌ Bu foydalanuvchi topilmadi. U botga hech bo'lmasa bir marta /start yozgan bo'lishi kerak.",
+        "ru": "❌ Пользователь не найден. Он должен был хотя бы раз написать боту /start.",
+        "en": "❌ User not found. They need to have sent /start to the bot at least once.",
+    },
+    "grantpro_done": {
+        "uz": "✅ {target} uchun Pro tarif faollashtirildi.",
+        "ru": "✅ Тариф Pro активирован для {target}.",
+        "en": "✅ Pro tier activated for {target}.",
+    },
+    "revokepro_done": {
+        "uz": "❌ {target} uchun Pro tarif bekor qilindi.",
+        "ru": "❌ Тариф Pro отключён для {target}.",
+        "en": "❌ Pro tier revoked for {target}.",
+    },
 }
 
 

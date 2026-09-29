@@ -105,6 +105,16 @@ async def upsert_user(user_id: int, username: str | None, first_name: str | None
         await db.commit()
 
 
+async def get_user_by_username(username: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_language(user_id: int) -> str | None:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT language FROM users WHERE user_id = ?", (user_id,))
@@ -127,7 +137,19 @@ async def is_premium(user_id: int) -> bool:
 
 async def set_premium(user_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_premium = 1 WHERE user_id = ?", (user_id,))
+        await db.execute(
+            """
+            INSERT INTO users (user_id, is_premium) VALUES (?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET is_premium = 1
+            """,
+            (user_id,),
+        )
+        await db.commit()
+
+
+async def revoke_premium(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_premium = 0 WHERE user_id = ?", (user_id,))
         await db.commit()
 
 
