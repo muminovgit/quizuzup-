@@ -164,6 +164,24 @@ async def submit_quiz(quiz_id: int, payload: SubmitRequest, session: dict = Depe
     return {"score": correct_count, "total": len(payload.answers), "results": results}
 
 
+@app.post("/api/quizzes/{quiz_id}/questions/{question_id}/answer")
+async def answer_question(
+    quiz_id: int, question_id: int, payload: RetryRequest, session: dict = Depends(get_current_user)
+):
+    """Grades and records a single answer immediately (one-question-at-a-time UI)."""
+    question = await db.get_question_by_id(question_id)
+    if question is None or question["quiz_id"] != quiz_id:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    is_correct = payload.selected_option == question["correct_option"]
+    await db.record_web_attempt(session["user_id"], quiz_id, question_id, payload.selected_option, is_correct)
+    return {
+        "correct": is_correct,
+        "correct_option": question["correct_option"],
+        "explanation": question["explanation"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Mistakes (review + retry)
 # ---------------------------------------------------------------------------

@@ -1,141 +1,192 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, type QuizDetail, type SubmitResponse } from '../api'
+import { api, type AnswerResult, type QuizDetail } from '../api'
+
+const OPTION_STYLES = [
+  { idle: 'bg-blue-500 hover:bg-blue-600', ring: 'ring-blue-300' },
+  { idle: 'bg-red-500 hover:bg-red-600', ring: 'ring-red-300' },
+  { idle: 'bg-amber-500 hover:bg-amber-600', ring: 'ring-amber-300' },
+  { idle: 'bg-emerald-500 hover:bg-emerald-600', ring: 'ring-emerald-300' },
+]
 
 export default function QuizTakePage() {
   const { id } = useParams()
   const quizId = Number(id)
 
   const [quiz, setQuiz] = useState<QuizDetail | null>(null)
-  const [answers, setAnswers] = useState<Record<number, number>>({})
-  const [result, setResult] = useState<SubmitResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+
+  const [index, setIndex] = useState(0)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [answerResult, setAnswerResult] = useState<AnswerResult | null>(null)
+  const [score, setScore] = useState(0)
+  const [finished, setFinished] = useState(false)
+  const [answering, setAnswering] = useState(false)
 
   useEffect(() => {
-    setQuiz(null)
-    setAnswers({})
-    setResult(null)
     api
       .getQuiz(quizId)
       .then(setQuiz)
       .catch((err) => setError(err instanceof Error ? err.message : 'Xatolik'))
   }, [quizId])
 
-  function pick(questionId: number, optionIndex: number) {
-    if (result) return
-    setAnswers((prev) => ({ ...prev, [questionId]: optionIndex }))
+  function resetForNewQuestion() {
+    setSelected(null)
+    setAnswerResult(null)
   }
 
-  async function submit() {
-    if (!quiz) return
-    setSubmitting(true)
-    setError(null)
+  function restart() {
+    setIndex(0)
+    setScore(0)
+    setFinished(false)
+    resetForNewQuestion()
+  }
+
+  async function pick(optionIndex: number) {
+    if (!quiz || answerResult || answering) return
+    const question = quiz.questions[index]
+    setSelected(optionIndex)
+    setAnswering(true)
     try {
-      const payload = Object.entries(answers).map(([qid, selected]) => ({
-        question_id: Number(qid),
-        selected_option: selected,
-      }))
-      const res = await api.submitQuiz(quiz.quiz_id, payload)
-      setResult(res)
+      const res = await api.answerQuestion(quiz.quiz_id, question.question_id, optionIndex)
+      setAnswerResult(res)
+      if (res.correct) setScore((s) => s + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Xatolik')
     } finally {
-      setSubmitting(false)
+      setAnswering(false)
+    }
+  }
+
+  function next() {
+    if (!quiz) return
+    if (index + 1 < quiz.questions.length) {
+      setIndex((i) => i + 1)
+      resetForNewQuestion()
+    } else {
+      setFinished(true)
     }
   }
 
   if (error) return <p className="text-red-500">{error}</p>
   if (!quiz) return <p style={{ color: 'var(--text-muted)' }}>Yuklanmoqda...</p>
 
-  const resultByQuestion = new Map(result?.results.map((r) => [r.question_id, r]))
-  const allAnswered = quiz.questions.every((q) => answers[q.question_id] !== undefined)
+  const total = quiz.questions.length
+
+  if (finished) {
+    const pct = Math.round((score / total) * 100)
+    const emoji = pct >= 80 ? '🎉' : pct >= 50 ? '👍' : '💪'
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center">
+        <div className="card rounded-3xl shadow-xl p-8 max-w-sm w-full text-center">
+          <div className="text-6xl mb-3">{emoji}</div>
+          <h1 className="text-2xl font-bold mb-1">Natija</h1>
+          <p className="text-4xl font-extrabold text-brand-start my-3">
+            {score} / {total}
+          </p>
+          <p className="mb-6" style={{ color: 'var(--text-muted)' }}>
+            {pct}% to'g'ri javob
+          </p>
+          <div className="space-y-2">
+            <button
+              onClick={restart}
+              className="w-full rounded-xl bg-gradient-to-r from-brand-start to-brand-end text-white font-semibold py-3"
+            >
+              Qayta yechish
+            </button>
+            <Link
+              to="/quizzes"
+              className="block w-full rounded-xl border-2 font-semibold py-3"
+              style={{ borderColor: 'var(--border)' }}
+            >
+              Testlar ro'yxati
+            </Link>
+            <Link to="/mistakes" className="block text-sm text-brand-start font-medium pt-2">
+              Xatolarimni ko'rish →
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const question = quiz.questions[index]
+  const progressPct = ((index + (answerResult ? 1 : 0)) / total) * 100
 
   return (
-    <div>
-      <Link to="/quizzes" className="text-sm text-brand-start font-medium">
-        ← Testlar
-      </Link>
-      <h1 className="text-2xl font-bold mt-2 mb-1">{quiz.name}</h1>
+    <div className="max-w-lg mx-auto">
+      <div className="flex items-center justify-between mb-2">
+        <Link to="/quizzes" className="text-sm text-brand-start font-medium">
+          ← Chiqish
+        </Link>
+        <span className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>
+          {index + 1} / {total}
+        </span>
+      </div>
 
-      {result && (
-        <div className="card rounded-xl p-4 my-4 flex items-center gap-3">
-          <span className="text-3xl">{result.score === result.total ? '🎉' : '📊'}</span>
-          <div>
-            <div className="font-semibold">
-              Natija: {result.score} / {result.total}
-            </div>
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Xato javoblar "Xatolarim" bo'limida saqlandi.
-            </div>
-          </div>
+      <div className="h-2 rounded-full overflow-hidden mb-6" style={{ background: 'var(--border)' }}>
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-brand-start to-brand-end transition-all duration-300"
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
+
+      <div className="card rounded-2xl shadow-sm p-6 mb-5 min-h-[120px] flex items-center justify-center text-center">
+        <p className="text-lg font-semibold leading-snug">{question.question_text}</p>
+      </div>
+
+      {answerResult && (
+        <div
+          className={`rounded-xl px-4 py-3 mb-4 font-semibold text-center text-white ${
+            answerResult.correct ? 'bg-emerald-500' : 'bg-red-500'
+          }`}
+        >
+          {answerResult.correct ? '✅ To\'g\'ri!' : '❌ Noto\'g\'ri'}
+          {answerResult.explanation && (
+            <p className="font-normal text-sm mt-1 opacity-90">💡 {answerResult.explanation}</p>
+          )}
         </div>
       )}
 
-      <div className="space-y-5 mt-4">
-        {quiz.questions.map((q, qi) => {
-          const picked = answers[q.question_id]
-          const r = resultByQuestion.get(q.question_id)
+      <div className="grid grid-cols-2 gap-3">
+        {question.options.map((opt) => {
+          const style = OPTION_STYLES[opt.index % OPTION_STYLES.length]
+          const isSelected = selected === opt.index
+          const isCorrectOption = answerResult && opt.index === answerResult.correct_option
+          const isWrongPick = answerResult && isSelected && !answerResult.correct
+
+          let extra = ''
+          if (answerResult) {
+            if (isCorrectOption) extra = 'ring-4 ring-white scale-105'
+            else if (isWrongPick) extra = 'opacity-60 ring-4 ring-white'
+            else extra = 'opacity-40'
+          } else if (isSelected) {
+            extra = `ring-4 ${style.ring}`
+          }
+
           return (
-            <div key={q.question_id} className="card rounded-xl p-5">
-              <div className="font-medium mb-3">
-                {qi + 1}. {q.question_text}
-              </div>
-              <div className="grid gap-2">
-                {q.options.map((opt) => {
-                  const isPicked = picked === opt.index
-                  let stateClass = 'border-transparent'
-                  if (result && r) {
-                    if (opt.index === r.correct_option) {
-                      stateClass = 'border-green-500 bg-green-500/10'
-                    } else if (isPicked && !r.correct) {
-                      stateClass = 'border-red-500 bg-red-500/10'
-                    }
-                  } else if (isPicked) {
-                    stateClass = 'border-brand-start bg-brand-start/10'
-                  }
-                  return (
-                    <button
-                      key={opt.index}
-                      type="button"
-                      disabled={!!result}
-                      onClick={() => pick(q.question_id, opt.index)}
-                      className={`text-left rounded-lg border-2 px-4 py-2.5 transition-colors ${stateClass} disabled:cursor-default`}
-                      style={{ background: stateClass === 'border-transparent' ? 'var(--bg)' : undefined }}
-                    >
-                      {opt.text}
-                    </button>
-                  )
-                })}
-              </div>
-              {result && r && r.explanation && (
-                <p className="text-sm mt-3" style={{ color: 'var(--text-muted)' }}>
-                  💡 {r.explanation}
-                </p>
-              )}
-            </div>
+            <button
+              key={opt.index}
+              type="button"
+              disabled={!!answerResult || answering}
+              onClick={() => pick(opt.index)}
+              className={`min-h-[92px] rounded-2xl px-3 py-4 text-white font-semibold text-base leading-snug shadow-md transition-all active:scale-95 disabled:cursor-default ${style.idle} ${extra}`}
+            >
+              {isCorrectOption && '✓ '}
+              {isWrongPick && '✕ '}
+              {opt.text}
+            </button>
           )
         })}
       </div>
 
-      {!result && (
+      {answerResult && (
         <button
-          onClick={submit}
-          disabled={!allAnswered || submitting}
-          className="w-full mt-6 rounded-lg bg-gradient-to-r from-brand-start to-brand-end text-white font-semibold py-3 disabled:opacity-50 transition-opacity"
+          onClick={next}
+          className="w-full mt-5 rounded-xl bg-gradient-to-r from-brand-start to-brand-end text-white font-semibold py-3.5"
         >
-          {submitting ? 'Yuborilmoqda...' : 'Yakunlash'}
+          {index + 1 < total ? 'Keyingisi →' : 'Yakunlash'}
         </button>
-      )}
-
-      {result && (
-        <Link
-          to="/quizzes"
-          className="block w-full mt-6 text-center rounded-lg border-2 font-semibold py-3"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          Testlar ro'yxatiga qaytish
-        </Link>
       )}
     </div>
   )

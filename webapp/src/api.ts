@@ -81,6 +81,12 @@ export interface SubmitResponse {
   results: SubmitResult[]
 }
 
+export interface AnswerResult {
+  correct: boolean
+  correct_option: number
+  explanation: string | null
+}
+
 export interface Mistake {
   question_id: number
   quiz_id: number
@@ -106,10 +112,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ answers }),
     }),
+  answerQuestion: (quizId: number, questionId: number, selectedOption: number) =>
+    request<AnswerResult>(`/api/quizzes/${quizId}/questions/${questionId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ selected_option: selectedOption }),
+    }),
   mistakes: () => request<Mistake[]>('/api/mistakes'),
   retryMistake: (questionId: number, selectedOption: number) =>
-    request<{ correct: boolean; correct_option: number; explanation: string | null }>(
-      `/api/mistakes/${questionId}/retry`,
-      { method: 'POST', body: JSON.stringify({ selected_option: selectedOption }) },
-    ),
+    request<AnswerResult>(`/api/mistakes/${questionId}/retry`, {
+      method: 'POST',
+      body: JSON.stringify({ selected_option: selectedOption }),
+    }),
 }
