@@ -45,33 +45,6 @@ async def healthz():
     return {"status": "ok"}
 
 
-@app.get("/_diag")
-async def diag(x_diag_key: str | None = Header(default=None)):
-    """TEMPORARY: checking whether storage actually persists data across
-    deploys (Render's free tier disk doesn't; verifying the Turso
-    migration fixes that). Remove once confirmed."""
-    import os
-
-    import config
-
-    if x_diag_key != config.WEB_CREDENTIAL_SECRET:
-        raise HTTPException(status_code=404)
-
-    async with db.aiosqlite.connect(db.DB_PATH) as conn:
-        conn.row_factory = db.aiosqlite.Row
-        cursor = await conn.execute("SELECT user_id, username, is_premium FROM users")
-        users = await cursor.fetchall()
-
-    return {
-        "using_turso": bool(config.TURSO_DATABASE_URL),
-        "db_path": db.DB_PATH,
-        "db_exists": os.path.exists(db.DB_PATH) if not config.TURSO_DATABASE_URL else "n/a",
-        "db_size_bytes": os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0,
-        "quizzes": await db.list_all_quizzes(),
-        "users": users,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
