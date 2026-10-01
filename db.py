@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     is_premium INTEGER NOT NULL DEFAULT 0,
+    question_quota INTEGER NOT NULL DEFAULT 0,
+    is_unlimited INTEGER NOT NULL DEFAULT 0,
     language TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -122,10 +124,15 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.executescript(SCHEMA)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN language TEXT")
-        except aiosqlite.OperationalError:
-            pass
+        for migration in (
+            "ALTER TABLE users ADD COLUMN language TEXT",
+            "ALTER TABLE users ADD COLUMN question_quota INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN is_unlimited INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                await db.execute(migration)
+            except aiosqlite.OperationalError:
+                pass
         await db.commit()
 
 
@@ -167,27 +174,78 @@ async def set_language(user_id: int, language: str) -> None:
 
 
 async def is_premium(user_id: int) -> bool:
+    """True if the user has any paid access at all -- a question-pack
+    balance left, or unlimited. Free-tier users (quota=0, not unlimited)
+    return False, same as before this had two tiers."""
+    limits = await get_user_limits(user_id)
+    return limits["is_unlimited"] or limits["quota"] > 0
+
+
+async def get_user_limits(user_id: int) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT is_premium FROM users WHERE user_id = ?", (user_id,))
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT question_quota, is_unlimited FROM users WHERE user_id = ?", (user_id,)
+        )
         row = await cursor.fetchone()
-        return bool(row and row[0])
+    quota = row["question_quota"] if row else 0
+    is_unlimited = bool(row["is_unlimited"]) if row else False
+    used = await get_question_usage(user_id)
+    return {"is_unlimited": is_unlimited, "quota": quota, "used": used, "remaining": max(quota - used, 0)}
 
 
-async def set_premium(user_id: int) -> None:
+async def get_question_usage(owner_id: int) -> int:
+    """Total questions across every quiz this user owns (quota is spent
+    account-wide, not per quiz)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*) FROM questions
+            WHERE quiz_id IN (SELECT quiz_id FROM quizzes WHERE owner_id = ?)
+            """,
+            (owner_id,),
+        )
+        row = await cursor.fetchone()
+    return row[0] if row else 0
+
+
+async def grant_question_pack(user_id: int, amount: int) -> None:
+    """Pro-300 purchase: adds `amount` to the user's standing question
+    quota (stacks across repeat purchases)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO users (user_id, is_premium) VALUES (?, 1)
-            ON CONFLICT(user_id) DO UPDATE SET is_premium = 1
+            INSERT INTO users (user_id, question_quota) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET question_quota = question_quota + excluded.question_quota
+            """,
+            (user_id, amount),
+        )
+        await db.commit()
+
+
+async def grant_unlimited(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO users (user_id, is_unlimited) VALUES (?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET is_unlimited = 1
             """,
             (user_id,),
         )
         await db.commit()
 
 
+async def set_premium(user_id: int) -> None:
+    """Back-compat alias: manual grants with no tier specified get the
+    base Pro-300 pack."""
+    await grant_question_pack(user_id, 300)
+
+
 async def revoke_premium(user_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_premium = 0 WHERE user_id = ?", (user_id,))
+        await db.execute(
+            "UPDATE users SET question_quota = 0, is_unlimited = 0 WHERE user_id = ?", (user_id,)
+        )
         await db.commit()
 
 

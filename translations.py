@@ -102,6 +102,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "⚠️ На бесплатном тарифе допускается до {max_questions} вопросов в тесте (в файле {got}). Сократите или сделайте /upgrade.",
         "en": "⚠️ Free tier quizzes can have at most {max_questions} questions (this file has {got}). Trim it or /upgrade.",
     },
+    "quota_exceeded": {
+        "uz": "⚠️ Sizda {remaining} ta savol uchun joy qoldi, lekin faylda {got} ta savol bor. Faylni qisqartiring yoki /upgrade orqali yana savol oching.",
+        "ru": "⚠️ У вас осталось место на {remaining} вопросов, а в файле {got}. Сократите файл или откройте больше через /upgrade.",
+        "en": "⚠️ You have room for {remaining} more questions, but this file has {got}. Trim it or get more room with /upgrade.",
+    },
     "parsed_ok": {
         "uz": "✅ {count} ta savol o'qildi!\nTest uchun qisqa nom yozing, yoki \"{default_name}\" nomini ishlatish uchun /skip bosing.",
         "ru": "✅ Распознано {count} вопросов!\nОтправьте короткое название теста или /skip, чтобы использовать \"{default_name}\".",
@@ -247,25 +252,86 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "верно",
         "en": "correct",
     },
-    "already_pro": {
-        "uz": "🌟 Siz allaqachon Pro tarifdasiz. Qo'llab-quvvatlaganingiz uchun rahmat!",
-        "ru": "🌟 Вы уже на тарифе Pro. Спасибо за поддержку!",
-        "en": "🌟 You're already on the Pro tier. Thanks for your support!",
+    "already_unlimited": {
+        "uz": "🌟 Sizda allaqachon Unlimited tarif bor. Qo'llab-quvvatlaganingiz uchun rahmat!",
+        "ru": "🌟 У вас уже тариф Unlimited. Спасибо за поддержку!",
+        "en": "🌟 You're already on the Unlimited tier. Thanks for your support!",
     },
-    "pro_title": {
-        "uz": "Quiz Bot Pro",
-        "ru": "Quiz Bot Pro",
-        "en": "Quiz Bot Pro",
+    "upgrade_intro": {
+        "uz": (
+            "🌟 Pro tariflar:\n\n"
+            "📦 Pro-{pack_size} — {pack_stars} Stars\n"
+            "   {pack_size} ta savol uchun joy qo'shadi (tugasa, yana sotib olishingiz mumkin)\n\n"
+            "♾ Unlimited — {unlimited_stars} Stars\n"
+            "   Hech qanday chegara yo'q, bir martalik to'lov\n\n"
+            "Joriy qoldiq: {remaining} ta savol"
+        ),
+        "ru": (
+            "🌟 Тарифы Pro:\n\n"
+            "📦 Pro-{pack_size} — {pack_stars} Stars\n"
+            "   Добавляет место на {pack_size} вопросов (закончится — можно купить ещё)\n\n"
+            "♾ Unlimited — {unlimited_stars} Stars\n"
+            "   Без ограничений, разовая оплата\n\n"
+            "Текущий остаток: {remaining} вопросов"
+        ),
+        "en": (
+            "🌟 Pro tiers:\n\n"
+            "📦 Pro-{pack_size} — {pack_stars} Stars\n"
+            "   Adds room for {pack_size} questions (buy again once it runs out)\n\n"
+            "♾ Unlimited — {unlimited_stars} Stars\n"
+            "   No caps at all, one-time payment\n\n"
+            "Current balance: {remaining} questions"
+        ),
     },
-    "pro_description": {
-        "uz": "Cheksiz testlar va cheksiz savollarni oching ({stars} Stars).",
-        "ru": "Откройте неограниченные тесты и вопросы ({stars} Stars).",
-        "en": "Unlock unlimited quizzes and unlimited questions per quiz ({stars} Stars).",
+    "buy_pack_button": {
+        "uz": "📦 Pro-{size} — {stars} ⭐",
+        "ru": "📦 Pro-{size} — {stars} ⭐",
+        "en": "📦 Pro-{size} — {stars} ⭐",
     },
-    "payment_success": {
-        "uz": "🌟 To'lov qabul qilindi! Endi siz Pro tarifdasiz — cheksiz test va savollar.",
-        "ru": "🌟 Оплата получена! Теперь у вас тариф Pro — неограниченные тесты и вопросы.",
-        "en": "🌟 Payment received! You're now on the Pro tier — unlimited quizzes and questions.",
+    "buy_unlimited_button": {
+        "uz": "♾ Unlimited — {stars} ⭐",
+        "ru": "♾ Unlimited — {stars} ⭐",
+        "en": "♾ Unlimited — {stars} ⭐",
+    },
+    "pack_title": {
+        "uz": "Quiz Bot Pro-300",
+        "ru": "Quiz Bot Pro-300",
+        "en": "Quiz Bot Pro-300",
+    },
+    "pack_description": {
+        "uz": "Savol limitingizga yana {size} ta savol qo'shadi.",
+        "ru": "Добавляет ещё {size} вопросов к вашему лимиту.",
+        "en": "Adds {size} more questions to your limit.",
+    },
+    "unlimited_title": {
+        "uz": "Quiz Bot Unlimited",
+        "ru": "Quiz Bot Unlimited",
+        "en": "Quiz Bot Unlimited",
+    },
+    "unlimited_description": {
+        "uz": "Cheksiz testlar va savollar, bir martalik to'lov.",
+        "ru": "Неограниченные тесты и вопросы, разовая оплата.",
+        "en": "Unlimited quizzes and questions, a one-time payment.",
+    },
+    "payment_success_pack": {
+        "uz": "🌟 To'lov qabul qilindi! Limitingizga yana {size} ta savol qo'shildi.",
+        "ru": "🌟 Оплата получена! К лимиту добавлено ещё {size} вопросов.",
+        "en": "🌟 Payment received! {size} more questions added to your limit.",
+    },
+    "payment_success_unlimited": {
+        "uz": "🌟 To'lov qabul qilindi! Endi sizda Unlimited tarif — cheksiz test va savollar.",
+        "ru": "🌟 Оплата получена! Теперь у вас тариф Unlimited — неограниченные тесты и вопросы.",
+        "en": "🌟 Payment received! You're now on the Unlimited tier — no caps at all.",
+    },
+    "quota_footer_unlimited": {
+        "uz": "♾ Tarifingiz: Unlimited (cheksiz)",
+        "ru": "♾ Ваш тариф: Unlimited (без ограничений)",
+        "en": "♾ Your tier: Unlimited (no caps)",
+    },
+    "quota_footer_pack": {
+        "uz": "📦 Qoldiq: {remaining} / {quota} ta savol",
+        "ru": "📦 Остаток: {remaining} / {quota} вопросов",
+        "en": "📦 Remaining: {remaining} / {quota} questions",
     },
     "upgrade_alt_payment": {
         "uz": (
@@ -290,16 +356,19 @@ TEXTS: dict[str, dict[str, str]] = {
     },
     "grantpro_usage": {
         "uz": (
-            "Foydalanish: /grantpro <user_id yoki @username>\n"
-            "Yoki foydalanuvchining xabariga javob (reply) qilib /grantpro deb yozing."
+            "Foydalanish: /grantpro <user_id yoki @username> [unlimited]\n"
+            "Yoki foydalanuvchining xabariga javob (reply) qilib /grantpro deb yozing.\n"
+            "Oxiriga \"unlimited\" qo'shmasangiz, standart 300 savollik paket beriladi."
         ),
         "ru": (
-            "Использование: /grantpro <user_id или @username>\n"
-            "Либо ответьте (reply) на сообщение пользователя командой /grantpro."
+            "Использование: /grantpro <user_id или @username> [unlimited]\n"
+            "Либо ответьте (reply) на сообщение пользователя командой /grantpro.\n"
+            "Без \"unlimited\" в конце выдаётся стандартный пакет на 300 вопросов."
         ),
         "en": (
-            "Usage: /grantpro <user_id or @username>\n"
-            "Or reply to the user's message with /grantpro."
+            "Usage: /grantpro <user_id or @username> [unlimited]\n"
+            "Or reply to the user's message with /grantpro.\n"
+            "Without \"unlimited\" at the end, grants the standard 300-question pack."
         ),
     },
     "grantpro_not_found": {
@@ -307,10 +376,15 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "❌ Пользователь не найден. Он должен был хотя бы раз написать боту /start.",
         "en": "❌ User not found. They need to have sent /start to the bot at least once.",
     },
-    "grantpro_done": {
-        "uz": "✅ {target} uchun Pro tarif faollashtirildi.",
-        "ru": "✅ Тариф Pro активирован для {target}.",
-        "en": "✅ Pro tier activated for {target}.",
+    "grantpro_done_pack": {
+        "uz": "✅ {target} uchun {size} ta savollik Pro-paket qo'shildi.",
+        "ru": "✅ Для {target} добавлен пакет Pro на {size} вопросов.",
+        "en": "✅ Added a {size}-question Pro pack for {target}.",
+    },
+    "grantpro_done_unlimited": {
+        "uz": "✅ {target} uchun Unlimited tarif faollashtirildi.",
+        "ru": "✅ Для {target} активирован тариф Unlimited.",
+        "en": "✅ Unlimited tier activated for {target}.",
     },
     "revokepro_done": {
         "uz": "❌ {target} uchun Pro tarif bekor qilindi.",

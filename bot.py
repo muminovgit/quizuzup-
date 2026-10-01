@@ -34,7 +34,9 @@ from config import (
     FREE_MAX_QUESTIONS,
     FREE_MAX_QUIZZES,
     POLL_OPEN_PERIOD,
-    PRO_UPGRADE_STARS,
+    PRO_QUESTION_PACK_SIZE,
+    PRO_QUESTION_PACK_STARS,
+    PRO_UNLIMITED_STARS,
     WEB_CREDENTIAL_SECRET,
     WEB_URL,
 )
@@ -296,9 +298,19 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
         await message.answer(t("parse_error", lang, error=str(exc)))
         return
 
-    if not await db.is_premium(message.from_user.id) and len(questions) > FREE_MAX_QUESTIONS:
-        await message.answer(t("question_limit", lang, max_questions=FREE_MAX_QUESTIONS, got=len(questions)))
-        return
+    limits = await db.get_user_limits(message.from_user.id)
+    if not limits["is_unlimited"]:
+        if limits["quota"] == 0:
+            if len(questions) > FREE_MAX_QUESTIONS:
+                await message.answer(
+                    t("question_limit", lang, max_questions=FREE_MAX_QUESTIONS, got=len(questions))
+                )
+                return
+        elif len(questions) > limits["remaining"]:
+            await message.answer(
+                t("quota_exceeded", lang, remaining=limits["remaining"], got=len(questions))
+            )
+            return
 
     default_name = document.file_name.rsplit(".", 1)[0][:50]
     await state.update_data(questions=questions, default_name=default_name)
@@ -361,7 +373,19 @@ async def cmd_myquizzes(message: Message) -> None:
 
     suffix = t("questions_suffix", lang)
     lines = [f"• {q['name']} — {q['question_count']} {suffix}" for q in quizzes]
-    await message.answer(t("myquizzes_header", lang) + "\n" + "\n".join(lines))
+
+    limits = await db.get_user_limits(message.from_user.id)
+    if limits["is_unlimited"]:
+        footer = t("quota_footer_unlimited", lang)
+    elif limits["quota"] > 0:
+        footer = t("quota_footer_pack", lang, remaining=limits["remaining"], quota=limits["quota"])
+    else:
+        footer = ""
+
+    text = t("myquizzes_header", lang) + "\n" + "\n".join(lines)
+    if footer:
+        text += "\n\n" + footer
+    await message.answer(text)
 
 
 # ---------------------------------------------------------------------------
@@ -622,24 +646,69 @@ async def cmd_leaderboard(message: Message) -> None:
 
 
 @router.message(Command("upgrade"))
-async def cmd_upgrade(message: Message, bot: Bot) -> None:
+async def cmd_upgrade(message: Message) -> None:
     lang = await _lang(message.from_user.id)
-    if await db.is_premium(message.from_user.id):
-        await message.answer(t("already_pro", lang))
+    limits = await db.get_user_limits(message.from_user.id)
+    if limits["is_unlimited"]:
+        await message.answer(t("already_unlimited", lang))
         return
 
-    await bot.send_invoice(
-        chat_id=message.chat.id,
-        title=t("pro_title", lang),
-        description=t("pro_description", lang, stars=PRO_UPGRADE_STARS),
-        payload=f"pro_upgrade:{message.from_user.id}",
-        currency="XTR",
-        prices=[LabeledPrice(label=t("pro_title", lang), amount=PRO_UPGRADE_STARS)],
-        provider_token="",
+    text = t(
+        "upgrade_intro",
+        lang,
+        pack_stars=PRO_QUESTION_PACK_STARS,
+        pack_size=PRO_QUESTION_PACK_SIZE,
+        unlimited_stars=PRO_UNLIMITED_STARS,
+        remaining=limits["remaining"],
     )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t("buy_pack_button", lang, stars=PRO_QUESTION_PACK_STARS, size=PRO_QUESTION_PACK_SIZE),
+                    callback_data="buy:pack",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t("buy_unlimited_button", lang, stars=PRO_UNLIMITED_STARS),
+                    callback_data="buy:unlimited",
+                )
+            ],
+        ]
+    )
+    await message.answer(text, reply_markup=keyboard)
 
     if ADMIN_CONTACT_USERNAME:
         await message.answer(t("upgrade_alt_payment", lang, admin=ADMIN_CONTACT_USERNAME))
+
+
+@router.callback_query(F.data.startswith("buy:"))
+async def cb_buy_tier(callback: CallbackQuery, bot: Bot) -> None:
+    lang = await _lang(callback.from_user.id)
+    tier = callback.data.split(":", 1)[1]
+    await callback.answer()
+
+    if tier == "pack":
+        await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=t("pack_title", lang),
+            description=t("pack_description", lang, size=PRO_QUESTION_PACK_SIZE),
+            payload=f"pack:{callback.from_user.id}",
+            currency="XTR",
+            prices=[LabeledPrice(label=t("pack_title", lang), amount=PRO_QUESTION_PACK_STARS)],
+            provider_token="",
+        )
+    else:
+        await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=t("unlimited_title", lang),
+            description=t("unlimited_description", lang),
+            payload=f"unlimited:{callback.from_user.id}",
+            currency="XTR",
+            prices=[LabeledPrice(label=t("unlimited_title", lang), amount=PRO_UNLIMITED_STARS)],
+            provider_token="",
+        )
 
 
 @router.pre_checkout_query()
@@ -651,13 +720,21 @@ async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
 async def process_successful_payment(message: Message, bot: Bot) -> None:
     lang = await _lang(message.from_user.id)
     payment = message.successful_payment
-    await db.set_premium(message.from_user.id)
+    tier = payment.invoice_payload.split(":", 1)[0]
+
+    if tier == "unlimited":
+        await db.grant_unlimited(message.from_user.id)
+        success_text = t("payment_success_unlimited", lang)
+    else:
+        await db.grant_question_pack(message.from_user.id, PRO_QUESTION_PACK_SIZE)
+        success_text = t("payment_success_pack", lang, size=PRO_QUESTION_PACK_SIZE)
+
     await db.record_payment(
         user_id=message.from_user.id,
         stars_amount=payment.total_amount,
         telegram_charge_id=payment.telegram_payment_charge_id,
     )
-    await message.answer(t("payment_success", lang))
+    await message.answer(success_text)
     await _issue_web_login(bot, message.from_user.id, lang)
 
 
@@ -672,12 +749,12 @@ async def cmd_myid(message: Message) -> None:
     await message.answer(t("myid_reply", lang, id=message.from_user.id))
 
 
-async def _resolve_target_user(message: Message, command: CommandObject) -> tuple[int | None, str | None]:
+async def _resolve_target_user(message: Message, args: str | None) -> tuple[int | None, str | None]:
     if message.reply_to_message and message.reply_to_message.from_user:
         target = message.reply_to_message.from_user
         return target.id, target.username or target.first_name
-    if command.args:
-        arg = command.args.strip()
+    if args:
+        arg = args.strip()
         if arg.startswith("@"):
             row = await db.get_user_by_username(arg[1:])
             if row:
@@ -693,12 +770,29 @@ async def cmd_grantpro(message: Message, command: CommandObject, bot: Bot) -> No
     if message.from_user.id not in ADMIN_IDS:
         return
     lang = await _lang(message.from_user.id)
-    user_id, label = await _resolve_target_user(message, command)
+
+    # Optional trailing tier keyword: "/grantpro <id> unlimited" or
+    # "/grantpro <id> 300" (300 is also just the default, explicit or not).
+    raw = (command.args or "").strip()
+    tier = "unlimited" if raw.lower().endswith("unlimited") else "pack"
+    target_arg = raw
+    for suffix in ("unlimited", "300"):
+        if raw.lower().endswith(suffix):
+            target_arg = raw[: -len(suffix)].strip()
+            break
+
+    user_id, label = await _resolve_target_user(message, target_arg or None)
     if user_id is None:
         await message.answer(t("grantpro_usage", lang))
         return
-    await db.set_premium(user_id)
-    await message.answer(t("grantpro_done", lang, target=label or user_id))
+
+    if tier == "unlimited":
+        await db.grant_unlimited(user_id)
+        await message.answer(t("grantpro_done_unlimited", lang, target=label or user_id))
+    else:
+        await db.grant_question_pack(user_id, PRO_QUESTION_PACK_SIZE)
+        await message.answer(t("grantpro_done_pack", lang, target=label or user_id, size=PRO_QUESTION_PACK_SIZE))
+
     await _issue_web_login(bot, user_id, await _lang(user_id))
 
 
@@ -716,7 +810,7 @@ async def cmd_revokepro(message: Message, command: CommandObject) -> None:
     if message.from_user.id not in ADMIN_IDS:
         return
     lang = await _lang(message.from_user.id)
-    user_id, label = await _resolve_target_user(message, command)
+    user_id, label = await _resolve_target_user(message, command.args)
     if user_id is None:
         await message.answer(t("grantpro_usage", lang))
         return

@@ -33,8 +33,14 @@ ADMIN_CONTACT_USERNAME = os.getenv("ADMIN_CONTACT_USERNAME", "")
 FREE_MAX_QUIZZES = 2
 FREE_MAX_QUESTIONS = 10
 
-# Telegram Stars price for the Pro upgrade (unlimited quizzes/questions)
-PRO_UPGRADE_STARS = 100
+# Two paid tiers:
+# - Pro-300: a one-time top-up of PRO_QUESTION_PACK_SIZE questions, added
+#   to the account's standing quota. Buying it again stacks another pack
+#   on top -- it's consumable, not a subscription.
+# - Unlimited: one-time purchase, removes every quiz/question cap for good.
+PRO_QUESTION_PACK_STARS = 100
+PRO_QUESTION_PACK_SIZE = 300
+PRO_UNLIMITED_STARS = 300
 
 # How long each poll stays open, in seconds
 POLL_OPEN_PERIOD = 30
