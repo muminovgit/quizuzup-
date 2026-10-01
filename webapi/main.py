@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -238,3 +239,20 @@ async def retry_mistake(question_id: int, payload: RetryRequest, session: dict =
         "correct_option": question["correct_option"],
         "explanation": question["explanation"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Serve the built frontend (webapp/dist), same origin as the API -- this
+# must be registered LAST so it never shadows an /api/* route above it.
+# ---------------------------------------------------------------------------
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "webapp" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        candidate = _FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_DIST / "index.html")

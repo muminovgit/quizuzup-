@@ -35,3 +35,8 @@ POLL_OPEN_PERIOD = 30
 
 # Public URL of the standalone web portal (shown in login messages)
 WEB_URL = os.getenv("WEB_URL", "")
+
+# Secret used to deterministically derive each user's web-portal password
+# (see auth.derive_password), so re-issuing credentials never changes them.
+# Falls back to BOT_TOKEN so it works with zero extra config.
+WEB_CREDENTIAL_SECRET = os.getenv("WEB_CREDENTIAL_SECRET", "") or BOT_TOKEN

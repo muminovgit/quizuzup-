@@ -1,4 +1,7 @@
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// ?? not ||: an empty string is a deliberate "same origin as the page"
+// setting (production, frontend and API served by the same host) and must
+// not fall through to the localhost default.
+export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 const TOKEN_KEY = 'quizuzup_token'
 

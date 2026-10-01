@@ -26,7 +26,7 @@ from aiogram.types import (
 )
 
 import db
-from auth import generate_password, hash_password
+from auth import derive_password, hash_password
 from config import (
     ADMIN_CONTACT_USERNAME,
     ADMIN_IDS,
@@ -35,6 +35,7 @@ from config import (
     FREE_MAX_QUIZZES,
     POLL_OPEN_PERIOD,
     PRO_UPGRADE_STARS,
+    WEB_CREDENTIAL_SECRET,
     WEB_URL,
 )
 from excel_parser import ExcelParseError, parse_quiz_excel
@@ -201,14 +202,18 @@ async def _pause_quiz(bot: Bot, runner: QuizRunner, message_key: str, **kwargs: 
 
 
 async def _issue_web_login(bot: Bot, user_id: int, lang: str) -> None:
-    """(Re)issues web-portal credentials for a Pro user and DMs them the login."""
+    """(Re)issues web-portal credentials for a Pro user and DMs them the login.
+
+    Both the username and password are derived deterministically from the
+    user_id (and a server secret), so calling this again -- another
+    /grantpro, a repeat /webportal, a second Stars payment -- always
+    reproduces the exact same login. Nothing is invalidated or rotated.
+    """
     if not WEB_URL:
         return
 
-    # user_id-derived, so it's always unique regardless of what the account's
-    # Telegram username/first name happens to be (or if it's missing).
     login = f"user{user_id}"
-    password = generate_password()
+    password = derive_password(WEB_CREDENTIAL_SECRET, user_id)
     await db.set_web_credentials(user_id, login, hash_password(password))
 
     try:
