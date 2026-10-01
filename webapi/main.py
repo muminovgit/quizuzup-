@@ -35,6 +35,15 @@ async def on_startup() -> None:
     await db.init_db()
 
 
+@app.get("/healthz")
+async def healthz():
+    """Cheap, unauthenticated endpoint for keep-alive pings (see
+    .github/workflows/keepalive.yml) -- Render's free tier spins the
+    service down after 15 minutes with no inbound HTTP traffic, which
+    would otherwise also kill the bot's long-polling loop alongside it."""
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
