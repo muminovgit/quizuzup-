@@ -1,4 +1,4 @@
 aiogram>=3.7.0
 openpyxl>=3.1.0
-aiosqlite>=0.19.0
+libsql>=0.1.8
 python-dotenv>=1.0.0

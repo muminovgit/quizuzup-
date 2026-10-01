@@ -14,6 +14,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 _db_path = os.getenv("DB_PATH", "quizbot.db")
 DB_PATH = _db_path if os.path.isabs(_db_path) else str(BASE_DIR / _db_path)
 
+# When set, db_driver.py routes all storage to a remote Turso (libSQL)
+# database instead of the local DB_PATH file. This is what makes data
+# survive a Render redeploy -- the free tier's local disk does not.
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+
 # Telegram user IDs allowed to run /grantpro and /revokepro (manual Pro
 # activation for admins who take payment outside Telegram Stars -- cash,
 # Click, Payme, bank transfer, etc). Comma-separated in the env var.

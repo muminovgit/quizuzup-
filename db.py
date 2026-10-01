@@ -1,6 +1,13 @@
-"""Async SQLite persistence layer for the quiz bot (aiosqlite)."""
+"""Async SQLite persistence layer for the quiz bot.
 
-import aiosqlite
+Backed by db_driver, which routes to a local SQLite file in dev or a
+remote Turso (libSQL) database in prod when TURSO_DATABASE_URL is set --
+see db_driver.py for why. The aiosqlite-shaped API (connect/row_factory/
+OperationalError) is preserved either way, so nothing below needs to
+know or care which one is actually in use.
+"""
+
+import db_driver as aiosqlite
 
 from config import DB_PATH
 
