@@ -45,6 +45,31 @@ async def healthz():
     return {"status": "ok"}
 
 
+@app.get("/_diag")
+async def diag(x_diag_key: str | None = Header(default=None)):
+    """TEMPORARY: checking whether Render's disk actually persists data
+    across deploys. Remove once confirmed either way."""
+    import os
+
+    import aiosqlite
+    import config
+
+    if x_diag_key != config.WEB_CREDENTIAL_SECRET:
+        raise HTTPException(status_code=404)
+
+    async with aiosqlite.connect(db.DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        users = [dict(r) for r in await (await conn.execute("SELECT user_id, username, is_premium FROM users")).fetchall()]
+
+    return {
+        "db_path": db.DB_PATH,
+        "db_exists": os.path.exists(db.DB_PATH),
+        "db_size_bytes": os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0,
+        "quizzes": await db.list_all_quizzes(),
+        "users": users,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
