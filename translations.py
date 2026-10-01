@@ -77,6 +77,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "📤 Отправьте .xlsx файл для нового теста (шаблон можно получить через /start).",
         "en": "📤 Send me the .xlsx file for your new quiz (get the template via /start).",
     },
+    "stray_document": {
+        "uz": "📎 Fayl qabul qilindi, lekin avval /newquiz buyrug'ini yuboring, keyin faylni qayta yuboring.",
+        "ru": "📎 Файл получен, но сначала отправьте команду /newquiz, затем отправьте файл ещё раз.",
+        "en": "📎 Got your file, but send /newquiz first, then re-send the file.",
+    },
     "send_valid_file": {
         "uz": "⚠️ Iltimos, .xlsx faylni hujjat sifatida yuboring yoki bekor qilish uchun /cancel bosing.",
         "ru": "⚠️ Пожалуйста, отправьте .xlsx файл как документ, или /cancel для отмены.",

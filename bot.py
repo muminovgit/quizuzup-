@@ -719,6 +719,14 @@ async def cmd_revokepro(message: Message, command: CommandObject) -> None:
     await message.answer(t("revokepro_done", lang, target=label or user_id))
 
 
+@router.message(F.document)
+async def receive_stray_document(message: Message) -> None:
+    """A file sent without first starting /newquiz -- previously silently
+    ignored (no handler matched), which looked like the bot was broken."""
+    lang = await _lang(message.from_user.id)
+    await message.answer(t("stray_document", lang))
+
+
 # ---------------------------------------------------------------------------
 # Leaderboard tracking via poll_answer updates
 # ---------------------------------------------------------------------------
