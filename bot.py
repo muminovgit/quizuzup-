@@ -764,7 +764,9 @@ async def main() -> None:
     me = await bot.get_me()
     BOT_USERNAME = me.username
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    # False, not True: a brief restart (e.g. a Render deploy) shouldn't
+    # silently drop messages people sent while the bot was momentarily down.
+    await bot.delete_webhook(drop_pending_updates=False)
     await dispatcher.start_polling(bot)
 
 
