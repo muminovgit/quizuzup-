@@ -7,6 +7,7 @@ state). This keeps a wrong AI guess from silently becoming the answer key
 for a paid quiz.
 """
 
+import asyncio
 import json
 import logging
 
@@ -48,6 +49,20 @@ async def suggest_answers(pending: list[dict]) -> dict[int, int]:
 
 
 async def _ask_batch(session: aiohttp.ClientSession, batch: list[dict], offset: int) -> dict[int, int]:
+    """Retries once on a request failure or an unparseable/empty response --
+    both have turned out to be transient (a network hiccup, or the model
+    occasionally burning its token budget on nothing) rather than anything
+    about the specific questions in the batch."""
+    for attempt in range(2):
+        result = await _ask_batch_once(session, batch, offset)
+        if result:
+            return result
+        if attempt == 0:
+            await asyncio.sleep(2)
+    return {}
+
+
+async def _ask_batch_once(session: aiohttp.ClientSession, batch: list[dict], offset: int) -> dict[int, int]:
     blocks = []
     for i, q in enumerate(batch):
         opts = "\n".join(f"{LETTERS[j]}) {opt}" for j, opt in enumerate(q["options"]))
@@ -64,6 +79,13 @@ async def _ask_batch(session: aiohttp.ClientSession, batch: list[dict], offset: 
     payload = {
         "model": MODEL,
         "max_tokens": 4000,
+        # This is a plain classification task with no need for extended
+        # reasoning -- without this, the model sometimes spends the whole
+        # max_tokens budget "thinking" and hits stop_reason=max_tokens
+        # before writing any of the actual JSON answer, which silently
+        # drops that entire batch (seen in production: 40 questions in one
+        # batch all came back unresolved this way).
+        "thinking": {"type": "disabled"},
         "messages": [{"role": "user", "content": prompt}],
     }
     headers = {
