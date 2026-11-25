@@ -7,6 +7,7 @@ and a Telegram Stars payment unlocks the unlimited "Pro" tier.
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -201,6 +202,38 @@ async def _pause_quiz(bot: Bot, runner: QuizRunner, message_key: str, **kwargs: 
         t(message_key, runner.lang, **kwargs),
         reply_markup=_resume_keyboard(runner.chat_id, runner.lang),
     )
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = int(round(seconds))
+    minutes, secs = divmod(seconds, 60)
+    return f"{minutes}m {secs}s" if minutes else f"{secs}s"
+
+
+async def _send_session_results(bot: Bot, runner: QuizRunner) -> None:
+    rows = await db.get_session_leaderboard(runner.session_id, len(runner.questions))
+    if not rows:
+        await bot.send_message(runner.chat_id, t("quiz_finished", runner.lang))
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [t("session_results_header", runner.lang, name=runner.quiz_name)]
+    for i, row in enumerate(rows):
+        prefix = medals[i] if i < len(medals) else f"{i + 1}."
+        name = row["username"] or f"user {row['user_id']}"
+        lines.append(
+            t(
+                "session_results_line",
+                runner.lang,
+                prefix=prefix,
+                name=name,
+                correct=row["correct_count"],
+                wrong=row["wrong_count"],
+                missed=row["missed_count"],
+                time=_format_duration(row["total_time_seconds"]),
+            )
+        )
+    await bot.send_message(runner.chat_id, "\n".join(lines))
 
 
 async def _issue_web_login(bot: Bot, user_id: int, lang: str) -> None:
@@ -467,10 +500,13 @@ async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
 
             question = runner.questions[runner.index]
             options, correct_index = _build_poll_options(question)
+            prefix = f"{runner.index + 1}/{len(runner.questions)}\n"
+            poll_question = prefix + _truncate(question["question_text"], TG_QUESTION_LIMIT - len(prefix))
+            sent_at = time.time()
             try:
                 poll_message = await bot.send_poll(
                     chat_id=runner.chat_id,
-                    question=_truncate(question["question_text"], TG_QUESTION_LIMIT),
+                    question=poll_question,
                     options=options,
                     type="quiz",
                     correct_option_id=correct_index,
@@ -489,6 +525,7 @@ async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
                 question_id=question["question_id"],
                 correct_option=correct_index,
                 chat_id=runner.chat_id,
+                sent_at=sent_at,
             )
             runner.index += 1
 
@@ -509,7 +546,7 @@ async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
             await bot.send_dice(runner.chat_id, emoji="🎉")
         except Exception:
             pass
-        await bot.send_message(runner.chat_id, t("quiz_finished", runner.lang))
+        await _send_session_results(bot, runner)
     except Exception:
         logger.exception("Quiz loop crashed for chat %s", runner.chat_id)
         try:
@@ -842,6 +879,7 @@ async def on_poll_answer(poll_answer: PollAnswer) -> None:
     is_correct = poll_answer.option_ids[0] == mapping["correct_option"]
     user = poll_answer.user
     username = user.username or user.first_name or str(user.id)
+    elapsed = max(time.time() - mapping["sent_at"], 0) if mapping["sent_at"] else None
     await db.record_answer(
         poll_id=poll_answer.poll_id,
         session_id=mapping["session_id"],
@@ -849,6 +887,7 @@ async def on_poll_answer(poll_answer: PollAnswer) -> None:
         user_id=user.id,
         username=username,
         is_correct=is_correct,
+        answer_time_seconds=elapsed,
     )
 
 

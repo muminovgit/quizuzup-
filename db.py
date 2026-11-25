@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS poll_map (
     question_id INTEGER NOT NULL,
     correct_option INTEGER NOT NULL,
     chat_id INTEGER NOT NULL,
+    sent_at REAL NOT NULL DEFAULT 0,
     FOREIGN KEY (session_id) REFERENCES quiz_sessions(session_id) ON DELETE CASCADE
 );
 
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS answers (
     user_id INTEGER NOT NULL,
     username TEXT,
     is_correct INTEGER NOT NULL,
+    answer_time_seconds REAL,
     answered_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(poll_id, user_id)
 );
@@ -128,6 +130,8 @@ async def init_db() -> None:
             "ALTER TABLE users ADD COLUMN language TEXT",
             "ALTER TABLE users ADD COLUMN question_quota INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN is_unlimited INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE poll_map ADD COLUMN sent_at REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE answers ADD COLUMN answer_time_seconds REAL",
         ):
             try:
                 await db.execute(migration)
@@ -378,15 +382,15 @@ async def finish_session(session_id: int) -> None:
 
 
 async def save_poll_map(
-    poll_id: str, session_id: int, question_id: int, correct_option: int, chat_id: int
+    poll_id: str, session_id: int, question_id: int, correct_option: int, chat_id: int, sent_at: float
 ) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO poll_map (poll_id, session_id, question_id, correct_option, chat_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO poll_map (poll_id, session_id, question_id, correct_option, chat_id, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (poll_id, session_id, question_id, correct_option, chat_id),
+            (poll_id, session_id, question_id, correct_option, chat_id, sent_at),
         )
         await db.commit()
 
@@ -406,15 +410,18 @@ async def record_answer(
     user_id: int,
     username: str | None,
     is_correct: bool,
+    answer_time_seconds: float | None = None,
 ) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO answers (poll_id, session_id, chat_id, user_id, username, is_correct)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(poll_id, user_id) DO UPDATE SET is_correct = excluded.is_correct
+            INSERT INTO answers (poll_id, session_id, chat_id, user_id, username, is_correct, answer_time_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(poll_id, user_id) DO UPDATE SET
+                is_correct = excluded.is_correct,
+                answer_time_seconds = excluded.answer_time_seconds
             """,
-            (poll_id, session_id, chat_id, user_id, username, int(is_correct)),
+            (poll_id, session_id, chat_id, user_id, username, int(is_correct), answer_time_seconds),
         )
         await db.commit()
 
@@ -444,6 +451,34 @@ async def get_leaderboard(chat_id: int, limit: int = 10) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def get_session_leaderboard(session_id: int, total_questions: int) -> list[dict]:
+    """Per-user result breakdown for one quiz run: correct/wrong/missed and
+    total time spent, ranked like a Kahoot-style scoreboard (more correct
+    wins; a tie goes to whoever was faster overall)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT user_id,
+                   COALESCE(MAX(username), '') AS username,
+                   SUM(is_correct) AS correct_count,
+                   COUNT(*) AS total_answered,
+                   COALESCE(SUM(answer_time_seconds), 0) AS total_time_seconds
+            FROM answers
+            WHERE session_id = ?
+            GROUP BY user_id
+            ORDER BY correct_count DESC, total_time_seconds ASC
+            """,
+            (session_id,),
+        )
+        rows = [dict(row) for row in await cursor.fetchall()]
+
+    for row in rows:
+        row["wrong_count"] = row["total_answered"] - row["correct_count"]
+        row["missed_count"] = max(total_questions - row["total_answered"], 0)
+    return rows
 
 
 # ---------------------------------------------------------------------------

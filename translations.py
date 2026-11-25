@@ -197,6 +197,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "🏁 Тест завершён! Смотрите /leaderboard для результатов.",
         "en": "🏁 Quiz finished! Check /leaderboard for the top scorers.",
     },
+    "session_results_header": {
+        "uz": "🏁 \"{name}\" yakunlandi!\n\n🏆 Natijalar:",
+        "ru": "🏁 Тест \"{name}\" завершён!\n\n🏆 Результаты:",
+        "en": "🏁 \"{name}\" finished!\n\n🏆 Results:",
+    },
+    "session_results_line": {
+        "uz": "{prefix} {name} — ✅ {correct}  ❌ {wrong}  ⏳ {missed}  🕐 {time}",
+        "ru": "{prefix} {name} — ✅ {correct}  ❌ {wrong}  ⏳ {missed}  🕐 {time}",
+        "en": "{prefix} {name} — ✅ {correct}  ❌ {wrong}  ⏳ {missed}  🕐 {time}",
+    },
     "quiz_paused_auto": {
         "uz": "⏸ Test avtomatik pauza qilindi — ketma-ket {streak} ta savolga hech kim javob bermadi.",
         "ru": "⏸ Тест автоматически поставлен на паузу — {streak} вопроса подряд остались без ответа.",
