@@ -7,6 +7,8 @@ OperationalError) is preserved either way, so nothing below needs to
 know or care which one is actually in use.
 """
 
+import json
+
 import db_driver as aiosqlite
 
 from config import DB_PATH
@@ -113,6 +115,16 @@ CREATE TABLE IF NOT EXISTS web_attempts (
     is_correct INTEGER NOT NULL,
     answered_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, question_id)
+);
+
+-- Backs bot.py's FSM storage (see db_fsm_storage.py) so a mid-upload
+-- state (waiting_name, confirming_ai, ...) survives a redeploy instead
+-- of vanishing with an in-memory aiogram MemoryStorage.
+CREATE TABLE IF NOT EXISTS fsm_storage (
+    storage_key TEXT PRIMARY KEY,
+    state TEXT,
+    data TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_quizzes_owner ON quizzes(owner_id);
@@ -605,3 +617,60 @@ async def get_mistakes(user_id: int) -> list[dict]:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# FSM storage (see db_fsm_storage.py) -- keeps bot.py's upload flow state
+# (waiting_name, confirming_ai, ...) alive across a redeploy.
+# ---------------------------------------------------------------------------
+
+
+async def get_fsm_state(storage_key: str) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT state FROM fsm_storage WHERE storage_key = ?", (storage_key,)
+        )
+        row = await cursor.fetchone()
+        return row["state"] if row else None
+
+
+async def set_fsm_state(storage_key: str, state: str | None) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO fsm_storage (storage_key, state, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(storage_key) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at
+            """,
+            (storage_key, state),
+        )
+        await db.commit()
+
+
+async def get_fsm_data(storage_key: str) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT data FROM fsm_storage WHERE storage_key = ?", (storage_key,)
+        )
+        row = await cursor.fetchone()
+        if not row or not row["data"]:
+            return {}
+        try:
+            return json.loads(row["data"])
+        except (TypeError, ValueError):
+            return {}
+
+
+async def set_fsm_data(storage_key: str, data: dict) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO fsm_storage (storage_key, data, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(storage_key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+            """,
+            (storage_key, json.dumps(data)),
+        )
+        await db.commit()

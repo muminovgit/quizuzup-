@@ -15,7 +15,6 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -43,6 +42,7 @@ from config import (
     WEB_URL,
 )
 from ai_answer import AIUnavailable, suggest_answers
+from db_fsm_storage import DBStorage
 from flexible_parser import ParseError, parse_quiz_file
 from translations import LANGUAGE_NAMES, t
 
@@ -1083,7 +1083,7 @@ async def main() -> None:
     await db.init_db()
 
     bot = Bot(token=BOT_TOKEN)
-    dispatcher = Dispatcher(storage=MemoryStorage())
+    dispatcher = Dispatcher(storage=DBStorage())
     dispatcher.include_router(router)
 
     global BOT_USERNAME
