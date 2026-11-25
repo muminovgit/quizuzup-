@@ -18,7 +18,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "welcome": {
         "uz": (
             "👋 Quiz Botga xush kelibsiz!\n\n"
-            "📤 /newquiz — .xlsx fayl yuklab yangi test yaratish\n"
+            "📤 /newquiz — fayl yuklab yangi test yaratish (.xlsx, .docx, .txt, .csv, .pdf)\n"
             "📚 /myquizzes — saqlangan testlaringiz ro'yxati\n"
             "▶️ /startquiz [nomi] — testni shu chatda boshlash\n"
             "⏸ /stop — ishlab turgan testni pauza qilish\n"
@@ -30,7 +30,7 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "ru": (
             "👋 Добро пожаловать в Quiz Bot!\n\n"
-            "📤 /newquiz — загрузить .xlsx файл и создать тест\n"
+            "📤 /newquiz — загрузить файл и создать тест (.xlsx, .docx, .txt, .csv, .pdf)\n"
             "📚 /myquizzes — список сохранённых тестов\n"
             "▶️ /startquiz [название] — запустить тест в этом чате\n"
             "⏸ /stop — поставить текущий тест на паузу\n"
@@ -42,7 +42,7 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "en": (
             "👋 Welcome to Quiz Bot!\n\n"
-            "📤 /newquiz — upload an .xlsx file to create a quiz\n"
+            "📤 /newquiz — upload a file to create a quiz (.xlsx, .docx, .txt, .csv, .pdf)\n"
             "📚 /myquizzes — list your saved quizzes\n"
             "▶️ /startquiz [name] — run a quiz in this chat\n"
             "⏸ /stop — pause the quiz that's currently running\n"
@@ -56,15 +56,21 @@ TEXTS: dict[str, dict[str, str]] = {
     "template_caption": {
         "uz": (
             "📎 Mana shu shablonni to'ldirib, /newquiz buyrug'i orqali yuboring:\n"
-            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation"
+            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation\n\n"
+            "Shablon ixtiyoriy -- istalgan .docx, .txt, .csv yoki .pdf test faylini ham yuborishingiz mumkin, "
+            "bot o'zi savol/javoblarni o'qib oladi."
         ),
         "ru": (
             "📎 Заполните этот шаблон и отправьте его командой /newquiz:\n"
-            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation"
+            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation\n\n"
+            "Шаблон не обязателен -- можно отправить любой .docx, .txt, .csv или .pdf файл с тестом, "
+            "бот сам распознает вопросы и ответы."
         ),
         "en": (
             "📎 Fill in this template and send it via /newquiz:\n"
-            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation"
+            "Question | Option A | Option B | Option C | Option D | Correct Answer (A/B/C/D) | Explanation\n\n"
+            "The template is optional -- you can also just send any .docx, .txt, .csv or .pdf file with your "
+            "test and the bot will read the questions and answers itself."
         ),
     },
     "limit_quizzes": {
@@ -73,9 +79,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "⚠️ Free tier allows up to {max_quizzes} quizzes.\nUse /deletequiz to remove one, or /upgrade to go Pro.",
     },
     "send_file": {
-        "uz": "📤 Yangi test uchun .xlsx faylni yuboring (shablon: /start orqali oling).",
-        "ru": "📤 Отправьте .xlsx файл для нового теста (шаблон можно получить через /start).",
-        "en": "📤 Send me the .xlsx file for your new quiz (get the template via /start).",
+        "uz": "📤 Yangi test uchun fayl yuboring: .xlsx, .docx, .txt, .csv yoki .pdf. Ixtiyoriy shablon: /start orqali oling.",
+        "ru": "📤 Отправьте файл для нового теста: .xlsx, .docx, .txt, .csv или .pdf. Шаблон (не обязателен) можно получить через /start.",
+        "en": "📤 Send a file for your new quiz: .xlsx, .docx, .txt, .csv or .pdf. The template is optional -- get it via /start.",
     },
     "stray_document": {
         "uz": "📎 Fayl qabul qilindi, lekin avval /newquiz buyrug'ini yuboring, keyin faylni qayta yuboring.",
@@ -83,14 +89,9 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "📎 Got your file, but send /newquiz first, then re-send the file.",
     },
     "send_valid_file": {
-        "uz": "⚠️ Iltimos, .xlsx faylni hujjat sifatida yuboring yoki bekor qilish uchun /cancel bosing.",
-        "ru": "⚠️ Пожалуйста, отправьте .xlsx файл как документ, или /cancel для отмены.",
-        "en": "⚠️ Please upload the .xlsx file as a document, or /cancel to stop.",
-    },
-    "not_xlsx": {
-        "uz": "⚠️ Bu .xlsx fayl emas. Iltimos, to'g'ri Excel fayl yuboring.",
-        "ru": "⚠️ Это не .xlsx файл. Пожалуйста, отправьте корректный Excel-файл.",
-        "en": "⚠️ That doesn't look like an .xlsx file. Please send a valid Excel file.",
+        "uz": "⚠️ Iltimos, faylni hujjat sifatida yuboring (.xlsx, .docx, .txt, .csv, .pdf) yoki bekor qilish uchun /cancel bosing.",
+        "ru": "⚠️ Пожалуйста, отправьте файл как документ (.xlsx, .docx, .txt, .csv, .pdf), или /cancel для отмены.",
+        "en": "⚠️ Please upload the file as a document (.xlsx, .docx, .txt, .csv, .pdf), or /cancel to stop.",
     },
     "parse_error": {
         "uz": "⚠️ Faylni o'qib bo'lmadi: {error}\nIltimos, tuzatib qayta yuboring.",

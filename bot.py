@@ -41,7 +41,7 @@ from config import (
     WEB_CREDENTIAL_SECRET,
     WEB_URL,
 )
-from excel_parser import ExcelParseError, parse_quiz_excel
+from flexible_parser import ParseError, parse_quiz_file
 from translations import LANGUAGE_NAMES, t
 
 logging.basicConfig(level=logging.INFO)
@@ -317,17 +317,14 @@ async def cmd_newquiz(message: Message, state: FSMContext) -> None:
 async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> None:
     lang = await _lang(message.from_user.id)
     document = message.document
-    if not document.file_name.lower().endswith(".xlsx"):
-        await message.answer(t("not_xlsx", lang))
-        return
 
     file = await bot.get_file(document.file_id)
     file_bytes_io = await bot.download_file(file.file_path)
     file_bytes = file_bytes_io.read()
 
     try:
-        questions = parse_quiz_excel(file_bytes)
-    except ExcelParseError as exc:
+        questions = parse_quiz_file(document.file_name, file_bytes)
+    except ParseError as exc:
         await message.answer(t("parse_error", lang, error=str(exc)))
         return
 
