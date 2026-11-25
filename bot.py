@@ -584,6 +584,41 @@ async def cmd_myquizzes(message: Message) -> None:
     await message.answer(text)
 
 
+@router.message(Command("allquizzes"))
+async def cmd_allquizzes(message: Message) -> None:
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    lang = await _lang(message.from_user.id)
+    quizzes = await db.list_all_quizzes_with_owner()
+    if not quizzes:
+        await message.answer(t("myquizzes_empty", lang))
+        return
+
+    suffix = t("questions_suffix", lang)
+    lines = [
+        f"#{q['quiz_id']} {q['name']} -- {q['owner_label']} ({q['question_count']} {suffix})\n"
+        f"/startquiz {q['quiz_id']}"
+        for q in quizzes
+    ]
+    header = t("allquizzes_header", lang, count=len(quizzes))
+
+    chunks: list[str] = []
+    current: list[str] = [header]
+    current_len = len(header)
+    for line in lines:
+        if current_len + len(line) + 1 > _AI_REVIEW_CHUNK_LIMIT:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+
+    for chunk in chunks:
+        await message.answer(chunk)
+
+
 # ---------------------------------------------------------------------------
 # /startquiz
 # ---------------------------------------------------------------------------

@@ -573,6 +573,27 @@ async def list_all_quizzes() -> list[dict]:
         return [dict(row) for row in rows]
 
 
+async def list_all_quizzes_with_owner() -> list[dict]:
+    """Same as list_all_quizzes but also names who owns each one -- for the
+    bot admin's /allquizzes overview, not the web portal's public listing."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT q.quiz_id, q.name, q.owner_id,
+                   COALESCE(u.username, u.first_name, CAST(q.owner_id AS TEXT)) AS owner_label,
+                   COUNT(qs.question_id) AS question_count
+            FROM quizzes q
+            LEFT JOIN questions qs ON qs.quiz_id = q.quiz_id
+            LEFT JOIN users u ON u.user_id = q.owner_id
+            GROUP BY q.quiz_id
+            ORDER BY q.created_at DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 async def get_question_by_id(question_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

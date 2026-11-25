@@ -194,6 +194,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "📚 Ваши тесты:",
         "en": "📚 Your quizzes:",
     },
+    "allquizzes_header": {
+        "uz": "📚 Tizimda jami {count} ta test:\n",
+        "ru": "📚 Всего тестов в системе: {count}\n",
+        "en": "📚 {count} quizzes total in the system:\n",
+    },
     "questions_suffix": {
         "uz": "savol",
         "ru": "вопросов",
