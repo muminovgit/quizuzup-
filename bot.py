@@ -207,6 +207,22 @@ async def _pause_quiz(bot: Bot, runner: QuizRunner, message_key: str, **kwargs: 
     )
 
 
+def _can_start_new_quiz(chat_id: int) -> bool:
+    """Starting a new quiz in a chat is blocked only by one that's actively
+    running. A paused one (someone hit /stop or it auto-paused) is silently
+    stopped for good so the new one can begin -- the uploader starting a
+    second quiz is a clear enough signal they're done with the first."""
+    runner = RUNNING_SESSIONS.get(chat_id)
+    if runner is None:
+        return True
+    if runner.running.is_set():
+        return False
+    runner.stopped = True
+    runner.running.set()
+    RUNNING_SESSIONS.pop(chat_id, None)
+    return True
+
+
 def _format_duration(seconds: float) -> str:
     seconds = int(round(seconds))
     minutes, secs = divmod(seconds, 60)
@@ -577,7 +593,7 @@ async def cmd_myquizzes(message: Message) -> None:
 async def cmd_startquiz(message: Message, command: CommandObject, bot: Bot) -> None:
     lang = await _lang(message.from_user.id)
 
-    if message.chat.id in RUNNING_SESSIONS:
+    if not _can_start_new_quiz(message.chat.id):
         await message.answer(t("quiz_already_running", lang))
         return
 
@@ -610,7 +626,7 @@ async def cmd_startquiz(message: Message, command: CommandObject, bot: Bot) -> N
 @router.callback_query(F.data.startswith("startquiz:"))
 async def cb_startquiz(callback: CallbackQuery, bot: Bot) -> None:
     lang = await _lang(callback.from_user.id)
-    if callback.message.chat.id in RUNNING_SESSIONS:
+    if not _can_start_new_quiz(callback.message.chat.id):
         await callback.answer(t("quiz_already_running", lang), show_alert=True)
         return
 
@@ -713,7 +729,12 @@ async def _run_quiz_loop(bot: Bot, runner: QuizRunner) -> None:
         except Exception:
             pass
     finally:
-        RUNNING_SESSIONS.pop(runner.chat_id, None)
+        # Only remove this runner's own entry -- if it was auto-stopped to
+        # make way for a new quiz in the same chat (_can_start_new_quiz),
+        # RUNNING_SESSIONS[chat_id] may already point at that new runner
+        # by the time this task wakes up and reaches here.
+        if RUNNING_SESSIONS.get(runner.chat_id) is runner:
+            RUNNING_SESSIONS.pop(runner.chat_id, None)
 
 
 # ---------------------------------------------------------------------------
