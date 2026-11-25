@@ -59,23 +59,37 @@ _ANSWER_LINE_RE = re.compile(
 _EXPLANATION_LINE_RE = re.compile(
     r"^\s*(izoh|explanation|объяснение|комментарий)\s*[:\-]?\s*(.+)$", re.IGNORECASE
 )
+# GIFT-ish "?/=" convention: questions start with "?", every option starts
+# with "=", and the correct one is the "=" with no space right after it
+# ("=Oila") while wrong ones have a space ("= Venera"). Common export
+# format from Uzbek test-bank tools.
+_QUESTION_MARK_RE = re.compile(r"^(?:\s*\?)+\s*")
+_EQUALS_RE = re.compile(r"^\s*=(\s*)(.+)$")
 
 
 class ParseError(Exception):
     pass
 
 
-def parse_quiz_file(filename: str, file_bytes: bytes) -> list[dict]:
-    """Dispatches to the right parser based on the file extension."""
+def parse_quiz_file(filename: str, file_bytes: bytes) -> tuple[list[dict], list[str]]:
+    """Dispatches to the right parser based on the file extension.
+
+    Returns (questions, warnings). warnings is non-empty only for the free-text
+    formats (.docx/.txt/.pdf), where a handful of unreadable questions out of
+    a large file (stray OCR/extraction glitches) are skipped rather than
+    failing the whole upload -- each skipped one is named in warnings so the
+    uploader can go check it. .xlsx/.csv stay strict: any bad row raises
+    immediately, since the user filled in a fixed template there.
+    """
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
     if ext == "xlsx":
         try:
-            return parse_quiz_excel(file_bytes)
+            return parse_quiz_excel(file_bytes), []
         except ExcelParseError as exc:
             raise ParseError(str(exc)) from exc
     if ext == "csv":
-        return _parse_csv(file_bytes)
+        return _parse_csv(file_bytes), []
     if ext == "docx":
         return _parse_free_text(_extract_docx_text(file_bytes))
     if ext == "pdf":
@@ -196,7 +210,7 @@ def _resolve_correct_index(correct_raw: str, options: list[str], row_number: int
 # ---------------------------------------------------------------------------
 
 
-def _parse_free_text(text: str) -> list[dict]:
+def _parse_free_text(text: str) -> tuple[list[dict], list[str]]:
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         raise ParseError("Faylda matn topilmadi.")
@@ -206,17 +220,22 @@ def _parse_free_text(text: str) -> list[dict]:
         blocks = _split_by_numbering(text)
 
     questions = []
+    warnings = []
     for block_number, block in enumerate(blocks, start=1):
-        question = _parse_block(block, block_number)
+        try:
+            question = _parse_block(block, block_number)
+        except ParseError as exc:
+            warnings.append(str(exc))
+            continue
         if question is not None:
             questions.append(question)
 
     if not questions:
         raise ParseError(
             "Faylda tushunarli savollar topilmadi. Har bir savol kamida 2 ta variant "
-            "(A)/B) yoki +/- bilan belgilangan) va to'g'ri javobni o'z ichiga olishi kerak."
+            "(A)/B), +/- yoki =/= bilan belgilangan) va to'g'ri javobni o'z ichiga olishi kerak."
         )
-    return questions
+    return questions, warnings
 
 
 def _split_by_numbering(text: str) -> list[str]:
@@ -259,6 +278,13 @@ def _parse_block(block: str, block_number: int) -> dict | None:
             options.append((pm_match.group(1), pm_match.group(2).strip()))
             continue
 
+        eq_match = _EQUALS_RE.match(line)
+        if eq_match and scheme in (None, "eq"):
+            scheme = "eq"
+            sign = "-" if eq_match.group(1) else "+"
+            options.append((sign, eq_match.group(2).strip()))
+            continue
+
         letter_match = _LETTER_RE.match(line)
         if letter_match and scheme in (None, "letter"):
             letter = CYRILLIC_LETTER_MAP.get(letter_match.group(1), letter_match.group(1).upper())
@@ -279,15 +305,16 @@ def _parse_block(block: str, block_number: int) -> dict | None:
 
     question_text = " ".join(question_lines).strip()
     question_text = _NUMBERED_LINE_RE.sub("", question_text, count=1).strip()
+    question_text = _QUESTION_MARK_RE.sub("", question_text, count=1).strip()
     if not question_text:
         return None
 
-    if scheme == "pm":
-        correct_candidates = [i for i, (sign, _) in enumerate(options) if sign in "+"]
+    if scheme in ("pm", "eq"):
+        correct_candidates = [i for i, (sign, _) in enumerate(options) if sign == "+"]
         if len(correct_candidates) != 1:
             raise ParseError(
                 f"{block_number}-savol: to'g'ri javob aniq emas "
-                "(bitta variant '+' bilan belgilanishi kerak)."
+                "(variantlardan faqat bittasi to'g'ri javob sifatida belgilangan bo'lishi kerak)."
             )
         correct_index = correct_candidates[0]
         option_texts = [text for _, text in options]

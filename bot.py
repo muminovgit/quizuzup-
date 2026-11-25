@@ -323,7 +323,7 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
     file_bytes = file_bytes_io.read()
 
     try:
-        questions = parse_quiz_file(document.file_name, file_bytes)
+        questions, warnings = parse_quiz_file(document.file_name, file_bytes)
     except ParseError as exc:
         await message.answer(t("parse_error", lang, error=str(exc)))
         return
@@ -345,7 +345,10 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
     default_name = document.file_name.rsplit(".", 1)[0][:50]
     await state.update_data(questions=questions, default_name=default_name)
     await state.set_state(QuizUpload.waiting_name)
-    await message.answer(t("parsed_ok", lang, count=len(questions), default_name=default_name))
+    text = t("parsed_ok", lang, count=len(questions), default_name=default_name)
+    if warnings:
+        text += "\n\n" + t("parsed_with_warnings", lang, skipped=len(warnings))
+    await message.answer(text)
 
 
 @router.message(QuizUpload.waiting_file, _not_a_command)

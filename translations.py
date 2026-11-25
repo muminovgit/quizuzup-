@@ -113,6 +113,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "✅ Распознано {count} вопросов!\nОтправьте короткое название теста или /skip, чтобы использовать \"{default_name}\".",
         "en": "✅ Parsed {count} questions!\nSend a short name for this quiz, or /skip to use \"{default_name}\".",
     },
+    "parsed_with_warnings": {
+        "uz": "⚠️ Diqqat: {skipped} ta savolda to'g'ri javob aniq bo'lmagani uchun ular o'tkazib yuborildi. Qolganlari saqlandi, lekin faylni qayta tekshirishni tavsiya qilamiz.",
+        "ru": "⚠️ Внимание: {skipped} вопрос(ов) пропущено -- не удалось точно определить правильный ответ. Остальные сохранены, но стоит перепроверить файл.",
+        "en": "⚠️ Note: {skipped} question(s) were skipped because the correct answer wasn't clear. The rest were saved, but it's worth double-checking the file.",
+    },
     "quiz_saved": {
         "uz": (
             "✅ \"{name}\" testi {count} ta savol bilan saqlandi (ID: #{quiz_id}).\n"
