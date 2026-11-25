@@ -7,6 +7,7 @@ and a Telegram Stars payment unlocks the unlimited "Pro" tier.
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from config import (
     WEB_CREDENTIAL_SECRET,
     WEB_URL,
 )
+from ai_answer import AIUnavailable, suggest_answers
 from flexible_parser import ParseError, parse_quiz_file
 from translations import LANGUAGE_NAMES, t
 
@@ -57,6 +59,7 @@ MISS_STREAK_TO_PAUSE = 4
 
 class QuizUpload(StatesGroup):
     waiting_file = State()
+    confirming_ai = State()
     waiting_name = State()
 
 
@@ -323,38 +326,181 @@ async def receive_quiz_file(message: Message, state: FSMContext, bot: Bot) -> No
     file_bytes = file_bytes_io.read()
 
     try:
-        questions, warnings = parse_quiz_file(document.file_name, file_bytes)
+        questions, pending, warnings = parse_quiz_file(document.file_name, file_bytes)
     except ParseError as exc:
         await message.answer(t("parse_error", lang, error=str(exc)))
         return
 
+    total_candidate = len(questions) + len(pending)
     limits = await db.get_user_limits(message.from_user.id)
     if not limits["is_unlimited"]:
         if limits["quota"] == 0:
-            if len(questions) > FREE_MAX_QUESTIONS:
+            if total_candidate > FREE_MAX_QUESTIONS:
                 await message.answer(
-                    t("question_limit", lang, max_questions=FREE_MAX_QUESTIONS, got=len(questions))
+                    t("question_limit", lang, max_questions=FREE_MAX_QUESTIONS, got=total_candidate)
                 )
                 return
-        elif len(questions) > limits["remaining"]:
+        elif total_candidate > limits["remaining"]:
             await message.answer(
-                t("quota_exceeded", lang, remaining=limits["remaining"], got=len(questions))
+                t("quota_exceeded", lang, remaining=limits["remaining"], got=total_candidate)
             )
             return
 
     default_name = document.file_name.rsplit(".", 1)[0][:50]
-    await state.update_data(questions=questions, default_name=default_name)
-    await state.set_state(QuizUpload.waiting_name)
-    text = t("parsed_ok", lang, count=len(questions), default_name=default_name)
-    if warnings:
-        text += "\n\n" + t("parsed_with_warnings", lang, skipped=len(warnings))
-    await message.answer(text)
+
+    if not pending:
+        await state.update_data(questions=questions, default_name=default_name)
+        await state.set_state(QuizUpload.waiting_name)
+        text = t("parsed_ok", lang, count=len(questions), default_name=default_name)
+        if warnings:
+            text += "\n\n" + t("parsed_with_warnings", lang, skipped=len(warnings))
+        await message.answer(text)
+        return
+
+    # Some questions had no reliable correct-answer marker in the source
+    # file -- ask Claude to suggest one, then let the uploader review and
+    # correct before anything is saved (a wrong guess becomes the answer
+    # key for a paid quiz, so it's never saved unreviewed).
+    await message.answer(t("ai_checking", lang, count=len(pending)))
+    try:
+        suggestions = await suggest_answers(
+            [
+                {
+                    "question": p["question"],
+                    "options": [
+                        o for o in (p["option_a"], p["option_b"], p["option_c"], p["option_d"]) if o
+                    ],
+                }
+                for p in pending
+            ]
+        )
+    except AIUnavailable:
+        await state.update_data(questions=questions, default_name=default_name)
+        await state.set_state(QuizUpload.waiting_name)
+        text = t("parsed_ok", lang, count=len(questions), default_name=default_name)
+        skipped = len(warnings) + len(pending)
+        text += "\n\n" + t("parsed_with_warnings", lang, skipped=skipped)
+        await message.answer(text)
+        return
+
+    ai_questions = []
+    for i, p in enumerate(pending):
+        p = dict(p)
+        p["correct_option"] = suggestions.get(i)
+        ai_questions.append(p)
+    ai_unresolved = sum(1 for q in ai_questions if q["correct_option"] is None)
+
+    await state.update_data(
+        resolved_questions=questions,
+        ai_questions=ai_questions,
+        default_name=default_name,
+        parse_warnings=len(warnings),
+    )
+    await state.set_state(QuizUpload.confirming_ai)
+    await message.answer(
+        t(
+            "ai_review_intro",
+            lang,
+            resolved=len(questions),
+            ai_count=len(ai_questions),
+            unresolved=ai_unresolved,
+        )
+    )
 
 
 @router.message(QuizUpload.waiting_file, _not_a_command)
 async def receive_quiz_file_invalid(message: Message) -> None:
     lang = await _lang(message.from_user.id)
     await message.answer(t("send_valid_file", lang))
+
+
+_CORRECTION_RE = re.compile(r"(\d+)\s*[:\-]?\s*([A-Da-d])")
+_AI_REVIEW_CHUNK_LIMIT = 3500
+
+
+def _format_ai_review(ai_questions: list[dict]) -> list[str]:
+    lines = []
+    letters = "ABCD"
+    for i, q in enumerate(ai_questions, start=1):
+        options = [q["option_a"], q["option_b"], q["option_c"], q["option_d"]]
+        if q["correct_option"] is not None:
+            letter = letters[q["correct_option"]]
+            answer = options[q["correct_option"]]
+            lines.append(f"{i}) {q['question'][:70]}\n   🤖 {letter}) {answer[:40]}")
+        else:
+            lines.append(f"{i}) {q['question'][:70]}\n   ❓ AI aniqlay olmadi")
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        if current and current_len + len(line) + 1 > _AI_REVIEW_CHUNK_LIMIT:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+@router.message(QuizUpload.confirming_ai, Command("review"))
+async def cmd_ai_review(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    for chunk in _format_ai_review(data.get("ai_questions", [])):
+        await message.answer(chunk)
+
+
+@router.message(QuizUpload.confirming_ai, Command("confirm"))
+async def cmd_ai_confirm(message: Message, state: FSMContext) -> None:
+    lang = await _lang(message.from_user.id)
+    data = await state.get_data()
+    final_questions = list(data.get("resolved_questions", []))
+    unresolved = data.get("parse_warnings", 0)
+    for q in data.get("ai_questions", []):
+        if q["correct_option"] is not None:
+            final_questions.append(q)
+        else:
+            unresolved += 1
+
+    default_name = data["default_name"]
+    await state.set_data({"questions": final_questions, "default_name": default_name})
+    await state.set_state(QuizUpload.waiting_name)
+    text = t("parsed_ok", lang, count=len(final_questions), default_name=default_name)
+    if unresolved:
+        text += "\n\n" + t("parsed_with_warnings", lang, skipped=unresolved)
+    await message.answer(text)
+
+
+@router.message(QuizUpload.confirming_ai, F.text, _not_a_command)
+async def receive_ai_corrections(message: Message, state: FSMContext) -> None:
+    lang = await _lang(message.from_user.id)
+    matches = _CORRECTION_RE.findall(message.text)
+    if not matches:
+        await message.answer(t("ai_review_help", lang))
+        return
+
+    data = await state.get_data()
+    ai_questions = data.get("ai_questions", [])
+    applied = 0
+    for num_str, letter in matches:
+        idx = int(num_str) - 1
+        if not (0 <= idx < len(ai_questions)):
+            continue
+        letter_idx = "ABCD".index(letter.upper())
+        options = [
+            ai_questions[idx]["option_a"],
+            ai_questions[idx]["option_b"],
+            ai_questions[idx]["option_c"],
+            ai_questions[idx]["option_d"],
+        ]
+        if letter_idx < len(options) and options[letter_idx]:
+            ai_questions[idx]["correct_option"] = letter_idx
+            applied += 1
+
+    await state.update_data(ai_questions=ai_questions)
+    await message.answer(t("ai_corrections_applied", lang, count=applied))
 
 
 @router.message(QuizUpload.waiting_name, Command("skip"))
@@ -385,6 +531,7 @@ async def _save_quiz(message: Message, state: FSMContext, name: str, questions: 
 
 
 @router.message(Command("cancel"), QuizUpload.waiting_file)
+@router.message(Command("cancel"), QuizUpload.confirming_ai)
 @router.message(Command("cancel"), QuizUpload.waiting_name)
 async def cancel_upload(message: Message, state: FSMContext) -> None:
     await state.clear()

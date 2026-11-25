@@ -71,25 +71,28 @@ class ParseError(Exception):
     pass
 
 
-def parse_quiz_file(filename: str, file_bytes: bytes) -> tuple[list[dict], list[str]]:
+def parse_quiz_file(filename: str, file_bytes: bytes) -> tuple[list[dict], list[dict], list[str]]:
     """Dispatches to the right parser based on the file extension.
 
-    Returns (questions, warnings). warnings is non-empty only for the free-text
-    formats (.docx/.txt/.pdf), where a handful of unreadable questions out of
-    a large file (stray OCR/extraction glitches) are skipped rather than
-    failing the whole upload -- each skipped one is named in warnings so the
-    uploader can go check it. .xlsx/.csv stay strict: any bad row raises
-    immediately, since the user filled in a fixed template there.
+    Returns (questions, pending, warnings):
+    - questions: fully resolved, ready to save.
+    - pending: structurally fine but the correct answer couldn't be
+      determined from the file (only possible for .docx/.txt/.pdf) --
+      a caller can run these through ai_answer.suggest_answers and have
+      the uploader confirm, or just drop them.
+    - warnings: blocks that couldn't be read as a question at all.
+    .xlsx/.csv stay strict: any bad row raises immediately and nothing is
+    "pending" for them, since the user filled in a fixed template there.
     """
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
     if ext == "xlsx":
         try:
-            return parse_quiz_excel(file_bytes), []
+            return parse_quiz_excel(file_bytes), [], []
         except ExcelParseError as exc:
             raise ParseError(str(exc)) from exc
     if ext == "csv":
-        return _parse_csv(file_bytes), []
+        return _parse_csv(file_bytes), [], []
     if ext == "docx":
         return _parse_free_text(_extract_docx_text(file_bytes))
     if ext == "pdf":
@@ -210,7 +213,17 @@ def _resolve_correct_index(correct_raw: str, options: list[str], row_number: int
 # ---------------------------------------------------------------------------
 
 
-def _parse_free_text(text: str) -> tuple[list[dict], list[str]]:
+def _parse_free_text(text: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Returns (questions, pending, warnings).
+
+    questions: fully resolved (correct_option is a real index).
+    pending: structurally fine (question + 2-4 options) but the source
+        file had no reliable marker for which option is correct --
+        correct_option is None. A caller can try to fill these in (e.g.
+        ai_answer.suggest_answers) and let the uploader confirm, or just
+        drop them.
+    warnings: blocks that couldn't be read as a question at all.
+    """
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         raise ParseError("Faylda matn topilmadi.")
@@ -220,6 +233,7 @@ def _parse_free_text(text: str) -> tuple[list[dict], list[str]]:
         blocks = _split_by_numbering(text)
 
     questions = []
+    pending = []
     warnings = []
     for block_number, block in enumerate(blocks, start=1):
         try:
@@ -227,15 +241,19 @@ def _parse_free_text(text: str) -> tuple[list[dict], list[str]]:
         except ParseError as exc:
             warnings.append(str(exc))
             continue
-        if question is not None:
+        if question is None:
+            continue
+        if question["correct_option"] is None:
+            pending.append(question)
+        else:
             questions.append(question)
 
-    if not questions:
+    if not questions and not pending:
         raise ParseError(
             "Faylda tushunarli savollar topilmadi. Har bir savol kamida 2 ta variant "
-            "(A)/B), +/- yoki =/= bilan belgilangan) va to'g'ri javobni o'z ichiga olishi kerak."
+            "(A)/B), +/- yoki =/= bilan belgilangan) bo'lishi kerak."
         )
-    return questions, warnings
+    return questions, pending, warnings
 
 
 def _split_by_numbering(text: str) -> list[str]:
@@ -311,12 +329,7 @@ def _parse_block(block: str, block_number: int) -> dict | None:
 
     if scheme in ("pm", "eq"):
         correct_candidates = [i for i, (sign, _) in enumerate(options) if sign == "+"]
-        if len(correct_candidates) != 1:
-            raise ParseError(
-                f"{block_number}-savol: to'g'ri javob aniq emas "
-                "(variantlardan faqat bittasi to'g'ri javob sifatida belgilangan bo'lishi kerak)."
-            )
-        correct_index = correct_candidates[0]
+        correct_index = correct_candidates[0] if len(correct_candidates) == 1 else None
         option_texts = [text for _, text in options]
     else:
         option_texts = []
@@ -332,17 +345,12 @@ def _parse_block(block: str, block_number: int) -> dict | None:
             letters = [letter for letter, _ in options]
             if answer_letter in letters:
                 correct_index = letters.index(answer_letter)
-        if correct_index is None:
-            raise ParseError(
-                f"{block_number}-savol: to'g'ri javob aniqlanmadi "
-                "(variantni '*' bilan belgilang yoki \"Javob: A\" qatorini qo'shing)."
-            )
 
     if len(option_texts) < 2:
         raise ParseError(f"{block_number}-savol: kamida 2 ta variant kerak.")
     option_texts = option_texts[:4]
-    if correct_index >= len(option_texts):
-        raise ParseError(f"{block_number}-savol: to'g'ri javob variantlar sonidan oshib ketdi.")
+    if correct_index is not None and correct_index >= len(option_texts):
+        correct_index = None
 
     option_a, option_b, option_c, option_d = (option_texts + [None, None, None, None])[:4]
     return {

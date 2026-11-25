@@ -118,6 +118,50 @@ TEXTS: dict[str, dict[str, str]] = {
         "ru": "⚠️ Внимание: {skipped} вопрос(ов) пропущено -- не удалось точно определить правильный ответ. Остальные сохранены, но стоит перепроверить файл.",
         "en": "⚠️ Note: {skipped} question(s) were skipped because the correct answer wasn't clear. The rest were saved, but it's worth double-checking the file.",
     },
+    "ai_checking": {
+        "uz": "🤖 {count} ta savolda to'g'ri javob fayldan aniqlanmadi. AI yordamida taxmin qilyapman, biroz vaqt olishi mumkin...",
+        "ru": "🤖 Для {count} вопросов не удалось определить правильный ответ из файла. Пробую с помощью AI, это может занять некоторое время...",
+        "en": "🤖 Couldn't tell the correct answer for {count} questions from the file. Asking AI to suggest one -- this may take a bit...",
+    },
+    "ai_review_intro": {
+        "uz": (
+            "✅ {resolved} ta savol aniq o'qildi.\n"
+            "🤖 {ai_count} ta savolda to'g'ri javob AI tomonidan taxmin qilindi"
+            " ({unresolved} tasini AI ham aniqlay olmadi).\n\n"
+            "Ro'yxatni ko'rish: /review\n"
+            "Tuzatish: \"<raqam><harf>\" formatida yuboring (masalan: 73C 80A)\n"
+            "Hammasini shunday saqlash: /confirm\n"
+            "Bekor qilish: /cancel"
+        ),
+        "ru": (
+            "✅ {resolved} вопрос(ов) распознано точно.\n"
+            "🤖 Для {ai_count} вопросов правильный ответ подобран через AI"
+            " ({unresolved} из них AI тоже не смог определить).\n\n"
+            "Посмотреть список: /review\n"
+            "Исправить: отправьте в формате \"<номер><буква>\" (например: 73C 80A)\n"
+            "Сохранить как есть: /confirm\n"
+            "Отменить: /cancel"
+        ),
+        "en": (
+            "✅ {resolved} question(s) parsed cleanly.\n"
+            "🤖 {ai_count} question(s) had their answer guessed by AI"
+            " ({unresolved} of those AI couldn't resolve either).\n\n"
+            "See the full list: /review\n"
+            "Fix one: send \"<number><letter>\" (e.g. 73C 80A)\n"
+            "Save as-is: /confirm\n"
+            "Cancel: /cancel"
+        ),
+    },
+    "ai_review_help": {
+        "uz": "Tuzatish uchun \"<raqam><harf>\" formatida yuboring (masalan: 73C 80A). Ro'yxat: /review, saqlash: /confirm.",
+        "ru": "Для исправления отправьте в формате \"<номер><буква>\" (например: 73C 80A). Список: /review, сохранить: /confirm.",
+        "en": "To fix one, send \"<number><letter>\" (e.g. 73C 80A). List: /review, save: /confirm.",
+    },
+    "ai_corrections_applied": {
+        "uz": "✅ {count} ta tuzatish qabul qilindi. Davom etish uchun: /review yoki /confirm.",
+        "ru": "✅ Принято исправлений: {count}. Далее: /review или /confirm.",
+        "en": "✅ {count} correction(s) applied. Next: /review or /confirm.",
+    },
     "quiz_saved": {
         "uz": (
             "✅ \"{name}\" testi {count} ta savol bilan saqlandi (ID: #{quiz_id}).\n"

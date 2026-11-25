@@ -52,3 +52,8 @@ WEB_URL = os.getenv("WEB_URL", "")
 # (see auth.derive_password), so re-issuing credentials never changes them.
 # Falls back to BOT_TOKEN so it works with zero extra config.
 WEB_CREDENTIAL_SECRET = os.getenv("WEB_CREDENTIAL_SECRET", "") or BOT_TOKEN
+
+# Optional: lets the bot ask Claude to suggest a correct answer for quiz
+# questions whose source file had no reliable marker (see ai_answer.py).
+# When empty, those questions are just skipped instead.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
