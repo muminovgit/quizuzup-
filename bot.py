@@ -402,7 +402,7 @@ async def cmd_myquizzes(message: Message) -> None:
         return
 
     suffix = t("questions_suffix", lang)
-    lines = [f"• {q['name']} — {q['question_count']} {suffix}" for q in quizzes]
+    lines = [f"• #{q['quiz_id']} {q['name']} — {q['question_count']} {suffix}" for q in quizzes]
 
     limits = await db.get_user_limits(message.from_user.id)
     if limits["is_unlimited"]:
@@ -432,9 +432,21 @@ async def cmd_startquiz(message: Message, command: CommandObject, bot: Bot) -> N
         return
 
     if command.args:
-        quiz = await db.get_quiz_by_name(message.from_user.id, command.args.strip())
-        if not await _require_owner(message, quiz, lang):
-            return
+        arg = command.args.strip()
+        quiz_id_arg = arg.lstrip("#")
+        if quiz_id_arg.isdigit():
+            # A numeric/"#"-prefixed arg is a shared quiz ID: anyone who was
+            # given the ID can start it, in a group or in their own DM --
+            # same "if you have the ID, you can take it" model the web
+            # portal already uses (list_all_quizzes has no owner filter).
+            quiz = await db.get_quiz_by_id(int(quiz_id_arg))
+            if quiz is None:
+                await message.answer(t("quiz_not_found", lang))
+                return
+        else:
+            quiz = await db.get_quiz_by_name(message.from_user.id, arg)
+            if not await _require_owner(message, quiz, lang):
+                return
         await _run_quiz(bot, message.chat.id, message.from_user.id, quiz, lang)
         return
 
