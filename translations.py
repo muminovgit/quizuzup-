@@ -114,9 +114,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "✅ Parsed {count} questions!\nSend a short name for this quiz, or /skip to use \"{default_name}\".",
     },
     "quiz_saved": {
-        "uz": "✅ \"{name}\" testi {count} ta savol bilan saqlandi.\nBoshlash uchun: /startquiz {name}",
-        "ru": "✅ Тест \"{name}\" сохранён ({count} вопросов).\nЗапустить: /startquiz {name}",
-        "en": "✅ Saved quiz \"{name}\" with {count} questions.\nRun it with /startquiz {name}",
+        "uz": (
+            "✅ \"{name}\" testi {count} ta savol bilan saqlandi (ID: #{quiz_id}).\n"
+            "Shu chatda boshlash: /startquiz {name}\n"
+            "Boshqalarga ulashish (ular o'z chatida yoki web'da yechishi uchun): /startquiz {quiz_id}"
+        ),
+        "ru": (
+            "✅ Тест \"{name}\" сохранён ({count} вопросов, ID: #{quiz_id}).\n"
+            "Запустить в этом чате: /startquiz {name}\n"
+            "Поделиться с другими (чтобы решали в своём чате или на сайте): /startquiz {quiz_id}"
+        ),
+        "en": (
+            "✅ Saved quiz \"{name}\" with {count} questions (ID: #{quiz_id}).\n"
+            "Run it in this chat: /startquiz {name}\n"
+            "Share with others (so they can solve it in their own chat or on the website): /startquiz {quiz_id}"
+        ),
     },
     "cancelled": {
         "uz": "❌ Bekor qilindi.",

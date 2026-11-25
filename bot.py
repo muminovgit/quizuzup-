@@ -376,9 +376,9 @@ async def _save_quiz(message: Message, state: FSMContext, name: str, questions: 
     if await db.quiz_name_exists(owner_id, name):
         name = f"{name} ({len(questions)}q)"
 
-    await db.create_quiz(owner_id, name, questions)
+    quiz_id = await db.create_quiz(owner_id, name, questions)
     await state.clear()
-    await message.answer(t("quiz_saved", lang, name=name, count=len(questions)))
+    await message.answer(t("quiz_saved", lang, name=name, count=len(questions), quiz_id=quiz_id))
 
 
 @router.message(Command("cancel"), QuizUpload.waiting_file)
