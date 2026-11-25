@@ -64,6 +64,10 @@ _EXPLANATION_LINE_RE = re.compile(
 # ("=Oila") while wrong ones have a space ("= Venera"). Common export
 # format from Uzbek test-bank tools.
 _QUESTION_MARK_RE = re.compile(r"^(?:\s*\?)+\s*")
+# Matches a "?" (or "??", "???") right at the start of a line, used as a
+# block-boundary marker when a "?/=" file has no blank lines between
+# questions at all (see _split_by_question_mark).
+_QUESTION_MARK_LINE_RE = re.compile(r"^[ \t]*\?+(?=[ \t]*\S)", re.MULTILINE)
 _EQUALS_RE = re.compile(r"^\s*=(\s*)(.+)$")
 
 
@@ -228,9 +232,17 @@ def _parse_free_text(text: str) -> tuple[list[dict], list[dict], list[str]]:
     if not text:
         raise ParseError("Faylda matn topilmadi.")
 
-    blocks = [b for b in re.split(r"\n\s*\n", text) if b.strip()]
-    if len(blocks) < 2:
-        blocks = _split_by_numbering(text)
+    # Try every block-boundary convention and keep whichever gives the most
+    # blocks. A coarser split (e.g. blank lines that only separate chapters,
+    # not questions) silently merges many questions into one unparseable
+    # blob instead of failing loudly, so "fewer, bigger blocks" is never
+    # the safer guess here -- the finer split is the correct one.
+    candidates = [
+        [b for b in re.split(r"\n\s*\n", text) if b.strip()],
+        _split_by_numbering(text),
+        _split_by_question_mark(text),
+    ]
+    blocks = max(candidates, key=len)
 
     questions = []
     pending = []
@@ -258,6 +270,21 @@ def _parse_free_text(text: str) -> tuple[list[dict], list[dict], list[str]]:
 
 def _split_by_numbering(text: str) -> list[str]:
     matches = list(_NUMBERED_LINE_RE.finditer(text))
+    if len(matches) < 2:
+        return [text]
+    blocks = []
+    for i, match in enumerate(matches):
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        blocks.append(text[start:end])
+    return blocks
+
+
+def _split_by_question_mark(text: str) -> list[str]:
+    """Last-resort split for the "?/=" convention when a file has no blank
+    lines between questions at all -- every question just starts with one
+    or more "?" right at the start of a line."""
+    matches = list(_QUESTION_MARK_LINE_RE.finditer(text))
     if len(matches) < 2:
         return [text]
     blocks = []
